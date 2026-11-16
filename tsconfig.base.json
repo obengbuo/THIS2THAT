@@ -1,0 +1,22 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "lib": ["ES2022"],
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "esModuleInterop": true,
+    "resolveJsonModule": true,
+    "skipLibCheck": true,
+    "isolatedModules": true,
+    "noEmit": true,
+    "baseUrl": ".",
+    "paths": {
+      "@ftt/dictionary": ["packages/dictionary/src/index.ts"],
+      "@ftt/shared-types": ["packages/shared-types/src/index.ts"],
+      "@ftt/game-engine": ["packages/game-engine/src/index.ts"],
+      "@ftt/game-engine/board": ["packages/game-engine/src/board.ts"]
+    }
+  }
+}

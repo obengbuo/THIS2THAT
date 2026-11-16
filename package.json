@@ -1,0 +1,27 @@
+{
+  "name": "from-this-to-that",
+  "private": true,
+  "version": "1.0.0",
+  "description": "FROM THIS TO THAT — a real-time whiteboard word-ladder game for couples, near or far.",
+  "workspaces": ["packages/*", "apps/*", "infrastructure/*"],
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "dev": "concurrently -n api,web -c magenta,cyan \"npm run dev -w @ftt/api\" \"npm run dev -w @ftt/web\"",
+    "dev:api": "npm run dev -w @ftt/api",
+    "dev:web": "npm run dev -w @ftt/web",
+    "build": "npm run build -w @ftt/web",
+    "build:dictionary": "npm run build -w @ftt/dictionary",
+    "typecheck": "tsc -p tsconfig.json --noEmit && npm run typecheck -w @ftt/web",
+    "test": "vitest run",
+    "test:stress": "STRESS=1 vitest run tests/stress.test.ts",
+    "synth": "npm run synth -w @ftt/infrastructure",
+    "deploy": "npm run deploy -w @ftt/infrastructure"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "concurrently": "^9.1.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  }
+}
