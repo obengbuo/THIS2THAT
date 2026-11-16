@@ -1,0 +1,190 @@
+@import 'tailwindcss';
+
+@theme {
+  --font-hand: 'Patrick Hand', 'Comic Sans MS', system-ui, sans-serif;
+  --font-marker: 'Caveat Brush', 'Patrick Hand', cursive;
+  --font-title: 'Permanent Marker', 'Caveat Brush', cursive;
+  --color-wall: #efe6d8;
+  --color-wall-deep: #e3d7c4;
+  --color-board: #fdfdfb;
+  --color-ink: #1c1c22;
+  --color-ink-soft: #5d5d68;
+  --color-blue: #2456c9;
+  --color-pink: #d6336c;
+  --color-green: #17924d;
+  --color-red: #d63a3a;
+  --color-amber: #c77700;
+}
+
+html,
+body {
+  height: 100%;
+}
+body {
+  margin: 0;
+  font-family: var(--font-hand);
+  font-size: 18px;
+  color: var(--color-ink);
+  background:
+    radial-gradient(120% 80% at 50% 0%, #f7f0e4 0%, transparent 60%),
+    repeating-linear-gradient(90deg, rgb(0 0 0 / 0.012) 0 2px, transparent 2px 7px),
+    var(--color-wall);
+  -webkit-tap-highlight-color: transparent;
+  overscroll-behavior: none;
+}
+button {
+  cursor: pointer;
+  touch-action: manipulation;
+}
+button:disabled {
+  cursor: default;
+}
+:focus-visible {
+  outline: 3px solid var(--color-blue);
+  outline-offset: 2px;
+  border-radius: 10px;
+}
+
+/* ── The whiteboard ───────────────────────────────────────────── */
+.board-frame {
+  position: relative;
+  padding: 9px 9px 0;
+  border-radius: 14px;
+  background: linear-gradient(160deg, #e6e9ed, #b9bec6 55%, #d5d9de);
+  box-shadow:
+    0 1px 0 rgb(255 255 255 / 0.9) inset,
+    0 18px 40px -18px rgb(60 40 10 / 0.45),
+    0 3px 8px rgb(60 40 10 / 0.18);
+}
+.board-surface {
+  position: relative;
+  border-radius: 6px;
+  background:
+    linear-gradient(115deg, rgb(255 255 255 / 0.9) 0%, transparent 28%, transparent 62%, rgb(255 255 255 / 0.7) 100%),
+    radial-gradient(60% 40% at 22% 30%, rgb(120 140 170 / 0.05), transparent 70%),
+    radial-gradient(50% 35% at 78% 72%, rgb(120 140 170 / 0.045), transparent 70%),
+    var(--color-board);
+  box-shadow:
+    0 0 0 1px rgb(0 0 0 / 0.08) inset,
+    0 2px 10px rgb(0 0 0 / 0.07) inset;
+  overflow: hidden;
+}
+/* faint ghosting, like a board that has been wiped many times */
+.board-surface::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: repeating-linear-gradient(8deg, transparent 0 46px, rgb(40 60 90 / 0.014) 46px 49px);
+}
+.board-tray {
+  height: 16px;
+  margin: 0 18px;
+  border-radius: 0 0 8px 8px;
+  background: linear-gradient(#c3c8cf, #9aa0a9);
+  box-shadow: 0 5px 8px -3px rgb(0 0 0 / 0.35);
+  position: relative;
+}
+
+/* Rows scale to whatever space the board has (4 or 5 letters, 4 to 10 rows). */
+.board-rows {
+  container-type: size;
+  flex: 1;
+  min-height: 0;
+}
+.board-rows-inner {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  font-family: var(--font-marker);
+  font-size: min(calc(100cqh / var(--rows) * 0.72), calc(100cqw / (var(--letters) * 1.5 + 2.4)), 4.2rem);
+  line-height: 1;
+}
+.word-row {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+}
+.word-cells {
+  display: flex;
+  gap: 0.22em;
+  position: relative;
+  padding: 0 0.3em 0.12em;
+  border-radius: 0.2em;
+}
+.cell {
+  width: 1.05em;
+  height: 1.12em;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  position: relative;
+}
+.cell-dash::after {
+  content: '';
+  position: absolute;
+  left: 8%;
+  right: 8%;
+  bottom: 0;
+  height: 0.07em;
+  min-height: 2px;
+  border-radius: 99px;
+  background: #b9bcc6;
+}
+.caret {
+  position: absolute;
+  bottom: 0.1em;
+  width: 0.07em;
+  min-width: 2px;
+  height: 0.8em;
+  border-radius: 2px;
+  background: var(--color-blue);
+  animation: blink 1.05s steps(2) infinite;
+}
+@keyframes blink {
+  50% {
+    opacity: 0;
+  }
+}
+.row-tag {
+  position: absolute;
+  left: calc(100% + 0.5em);
+  top: 50%;
+  translate: 0 -50%;
+  font-family: var(--font-hand);
+  font-size: clamp(11px, 0.3em, 15px);
+  white-space: nowrap;
+}
+
+/* Keyboard only where there is no physical one. */
+@media (hover: hover) and (pointer: fine) and (min-width: 900px) {
+  .touch-keyboard {
+    display: none;
+  }
+}
+@media not ((hover: hover) and (pointer: fine) and (min-width: 900px)) {
+  .desktop-hint {
+    display: none;
+  }
+}
+
+/* Short phones: give the board every pixel we can. */
+@media (max-height: 640px) {
+  .toolbar button {
+    font-size: 0;
+    gap: 0;
+    padding-block: 8px;
+  }
+  .kb-key {
+    height: 2.35rem;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .caret {
+    animation: none;
+  }
+}

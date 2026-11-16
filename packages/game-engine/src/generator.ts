@@ -16,12 +16,13 @@ export interface DifficultySpec {
 }
 
 /**
- * Difficulty is more than chain length: Easy uses everyday endpoint words and puzzles
- * with several familiar routes; Hard uses longer chains with few routes.
+ * Difficulty is more than chain length: Easy and Medium use everyday endpoint words and
+ * puzzles with several familiar routes; Hard draws endpoints from the wider familiar
+ * tier and uses longer chains with few routes.
  */
 export const DIFFICULTY: Record<Difficulty, DifficultySpec> = {
   easy: { minSlots: 2, maxSlots: 3, endpoints: 'basic', minFamiliarSolutions: 3, maxSolutions: Infinity },
-  medium: { minSlots: 4, maxSlots: 5, endpoints: 'common', minFamiliarSolutions: 2, maxSolutions: Infinity },
+  medium: { minSlots: 4, maxSlots: 5, endpoints: 'basic', minFamiliarSolutions: 2, maxSolutions: Infinity },
   hard: { minSlots: 6, maxSlots: 8, endpoints: 'common', minFamiliarSolutions: 1, maxSolutions: 60 },
 };
 
