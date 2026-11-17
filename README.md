@@ -110,10 +110,11 @@ differ in exactly one position. The graph is built once per process using wildca
 |------|--------|-------|----------|
 | basic  | SCOWL size ≤ 20 | 923 / 1,371 | Easy and Medium start/target words |
 | common | SCOWL size ≤ 35 | 1,863 / 3,468 | Hard start/target words; the guaranteed solution |
-| all    | SCOWL size ≤ 60 | 2,528 / 5,036 | everything a player may enter |
+| all    | SCOWL size ≤ 70 plus the `word-list` package (~274k words) | 5,479 / 12,600 | everything a player may enter |
 
-Proper nouns and abbreviations are not in SCOWL's base lists; a blocklist removes offensive
-words. Rebuild with `npm run build:dictionary`.
+Players may write any word in the wide list, however unusual; puzzles and hints stick to
+familiar words. Proper nouns and abbreviations are not in either source; a blocklist removes
+offensive words. Rebuild with `npm run build:dictionary`.
 
 **Generating a puzzle** (`generatePuzzle`):
 
@@ -192,16 +193,17 @@ completion, statistics, old-format rooms, and input rejection over HTTP.
 Stress report from the last run (10,000 puzzles):
 
 ```
-unique puzzles         9568        duplicate percentage   4.32%
-solvability            100.00%     avg generation time    0.331 ms
+unique puzzles         8955        duplicate percentage   10.45%
+solvability            100.00%     avg generation time    0.799 ms
 fallback puzzles used  0           4-letter 5000 / 5-letter 5000
-4-letter easy    1667 | slots {2: 487, 3: 1180}     5-letter easy    1667 | {2: 552, 3: 1115}
-4-letter medium  1667 | slots {4: 809, 5: 858}      5-letter medium  1667 | {4: 784, 5: 883}
-4-letter hard    1666 | slots {6: 608, 7: 605, 8: 453}   5-letter hard  1666 | {6: 559, 7: 553, 8: 554}
+4-letter easy    1667 | slots {2: 504, 3: 1163}     5-letter easy    1667 | {2: 575, 3: 1092}
+4-letter medium  1667 | slots {4: 847, 5: 820}      5-letter medium  1667 | {4: 827, 5: 840}
+4-letter hard    1666 | slots {6: 1466, 7: 198, 8: 2}    5-letter hard  1666 | {6: 746, 7: 581, 8: 339}
 ```
 
-Puzzles are not globally unique — with pure random draws about 4% of 10,000 repeat an earlier
-pair. Within a player's own history the exclusion window prevents repeats.
+Puzzles are not globally unique — with pure random draws about 10% of 10,000 repeat an earlier
+pair. The wide dictionary gives unusual words many shortcuts, so fewer word pairs are a full 8 or 9
+moves apart: long 4-letter Hard puzzles are now rare. Within a player's own history the exclusion window prevents repeats.
 
 Not covered by automated tests: the React UI (verified by driving the built site in a real
 browser with two players), and `DynamoStore` / the Lambda handlers against real AWS — see
@@ -440,7 +442,8 @@ app uses them.
 - **Statistics are per browser.** They are keyed by an anonymous id in local storage, so they do
   not follow a player across devices. Cognito sign-in is the natural next step and is not
   implemented.
-- **The dictionary is SCOWL-based**, so a few accepted or generated words will feel unusual, and
-  some words players expect may be missing. Edit the size thresholds or blocklist in
-  `packages/dictionary/scripts/build.mjs` and rebuild.
+- **The dictionary is two published word lists**, so recent or informal words (VAPE and EMOJI
+  are in; YEET is not), names and abbreviations can still be refused, and some accepted words
+  will look odd. Edit the sources or blocklist in `packages/dictionary/scripts/build.mjs` and
+  rebuild.
 - **Pass-the-Phone is honour-based** — both players share one device and one session.

@@ -5,8 +5,9 @@
  *  - "basic" tier   (SCOWL size <= 20): everyday words, used for Easy puzzle endpoints.
  *  - "common" tier  (SCOWL size <= 35): familiar words. Puzzle start/target words and
  *    the guaranteed solution path are drawn only from this tier.
- *  - "extra" tier   (SCOWL size 40-60): less common but legitimate words. Players may
- *    use them, but the generator never requires them.
+ *  - "extra" tier   (SCOWL size 40-70 plus the `word-list` package, a ~274k-word
+ *    tournament-style list): every other word a player may write, however unusual.
+ *    Players may use them, but the generator never requires them.
  *
  * SCOWL's base lists already exclude proper nouns and abbreviations; we additionally
  * drop anything not purely a-z and everything on the blocklist below.
@@ -15,7 +16,7 @@
  * on the source packages)
  */
 import { createRequire } from 'node:module';
-import { writeFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
@@ -26,7 +27,7 @@ const bad2 = require('naughty-words').en;
 
 const BASIC_SIZES = [10, 20];
 const COMMON_SIZES = [10, 20, 35];
-const EXTRA_SIZES = [40, 50, 55, 60];
+const EXTRA_SIZES = [40, 50, 55, 60, 70];
 const VARIANTS = ['english', 'english/american', 'english/british'];
 
 // Manual additions: vulgar, slur-adjacent, or otherwise not family-game material.
@@ -53,12 +54,14 @@ function collect(sizes) {
 
 const basic = collect(BASIC_SIZES);
 const common = collect(COMMON_SIZES);
-const extra = new Set([...collect(EXTRA_SIZES)].filter((w) => !common.has(w)));
+const keep = (w) => /^[a-z]+$/.test(w) && (w.length === 4 || w.length === 5) && !block.has(w);
+const wide = readFileSync(path.join(path.dirname(require.resolve('word-list')), 'words.txt'), 'utf8').split('\n').filter(keep).map((w) => w.toUpperCase());
+const extra = new Set([...collect(EXTRA_SIZES), ...wide].filter((w) => !common.has(w)));
 
 const pack = (set, len) => [...set].filter((w) => w.length === len).sort().join('');
 const data = {
-  version: '1.0.0',
-  source: 'SCOWL (via wordlist-english), sizes 10-60, en-US + en-GB',
+  version: '1.1.0',
+  source: 'SCOWL (via wordlist-english), sizes 10-70, en-US + en-GB; word-list',
   basic4: pack(basic, 4),
   common4: pack(common, 4),
   extra4: pack(extra, 4),
