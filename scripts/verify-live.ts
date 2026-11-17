@@ -2,8 +2,9 @@
 //
 //   npx tsx scripts/verify-live.ts https://main.<appId>.amplifyapp.com [ApiUrl]
 //
-// Plays a full two-player Couples game (create, join, presence, reject, lock, live push,
-// reload/resume, win, new round), then starts Solo and Pass-the-Phone and opens Statistics.
+// Plays a full two-player Couples game one letter at a time (create, join, presence, turns,
+// a rejected word, live push, reload/resume, take back, win, new round), then starts Solo and
+// Pass-the-Phone and opens Statistics. Also works against `npm run dev` (http://localhost:3000).
 // Needs Playwright + Chromium available (`require('playwright')`).
 //
 // SERVE_LOCAL=1 serves apps/web/out under the site origin instead of fetching the site
@@ -11,12 +12,12 @@
 import { readFileSync, existsSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import path from 'node:path';
-import { getGraph, solve } from '../packages/game-engine/src';
+import { changedIndex, getGraph, routeToTarget } from '../packages/game-engine/src';
 
 const { chromium } = createRequire(import.meta.url)('playwright') as typeof import('playwright');
 
 const SITE = (process.argv[2] ?? process.env.SITE_URL ?? '').replace(/\/+$/, '');
-if (!SITE.startsWith('https://')) throw new Error('Usage: npx tsx scripts/verify-live.ts https://<site>');
+if (!/^https:\/\/|^http:\/\/localhost[:/]?/.test(SITE)) throw new Error('Usage: npx tsx scripts/verify-live.ts https://<site> [ApiUrl]');
 const OUT = path.join(__dirname, '..', 'apps', 'web', 'out');
 const TYPES: Record<string, string> = {
   '.html': 'text/html; charset=utf-8', '.js': 'application/javascript', '.css': 'text/css', '.json': 'application/json',
@@ -28,7 +29,7 @@ const ok = (what: string) => { passed.push(what); console.log(`  ✓ ${what}`); 
 const T = { timeout: 20_000 };
 
 async function main() {
-  const proxy = process.env.HTTPS_PROXY ? { server: process.env.HTTPS_PROXY } : undefined;
+  const proxy = process.env.HTTPS_PROXY && SITE.startsWith('https://') ? { server: process.env.HTTPS_PROXY } : undefined;
   const browser = await chromium.launch({ proxy });
   const problems: string[] = [];
 
@@ -58,13 +59,19 @@ async function main() {
     const res = await fetch(`${new URL(api).origin}/games/${s.code}`, { headers: { authorization: `Bearer ${s.playerId}.${s.token}` } });
     return (await res.json()).game;
   });
-  const write = async (p: Player, slot: number, word: string) => {
-    await p.page.locator(`[aria-label^="Word ${slot + 1}:"]`).click();
-    for (let i = 0; i < 6; i++) await p.page.locator('[aria-label="Erase letter"]').click();
-    for (const ch of word) await p.page.locator(`.touch-keyboard button:text-is("${ch}")`).click();
+  type View = { start: string; target: string; length: 4 | 5; round: number; turn: string | null; status: string; wrongAttempts: number; chain: { word: string; by: string }[] };
+  const current = (g: View) => g.chain.at(-1)?.word ?? g.start;
+  const routeFor = (g: View) => routeToTarget(getGraph(g.length), [g.start, ...g.chain.map((c) => c.word)], g.target)!;
+  /** Changes one letter of the last word on the board and presses Check. */
+  const play = async (p: Player, from: string, to: string) => {
+    const i = changedIndex(from, to);
+    await p.page.locator(`button[aria-label^="Letter ${i + 1}:"]`).click();
+    await p.page.locator(`.touch-keyboard button:text-is("${to[i]}")`).click();
     await p.page.locator('[aria-label="Check word"]').click();
   };
-  const locked = (p: Player, slot: number, word: string) => p.page.locator(`[aria-label="Word ${slot + 1}: ${word}, locked"]`).waitFor(T);
+  const sees = (p: Player, n: number, word: string) => p.page.locator(`[aria-label^="Word ${n}: ${word}"]`).waitFor(T);
+  const gone = (p: Player, n: number) => p.page.locator(`[aria-label^="Word ${n}:"]`).waitFor({ ...T, state: 'detached' });
+  const canType = (p: Player) => p.page.locator('.touch-keyboard button:text-is("A")').isEnabled();
   const pick = (p: Player, label: string) => p.page.getByRole('button', { name: label }).first().click();
   const closeDialogs = async (p: Player) => {
     for (const b of await p.page.locator('[role="dialog"] [aria-label="Close"]').all()) await b.click().catch(() => {});
@@ -81,7 +88,7 @@ async function main() {
   await a.page.waitForLoadState('networkidle');
   const apiBase = (process.argv[3] ?? process.env.API_URL)?.replace(/\/+$/, '') ?? await a.page.evaluate(async () => {
     for (const src of Array.from(document.scripts, (s) => s.src).filter(Boolean)) {
-      const m = /https:\/\/[a-z0-9]+\.execute-api\.[a-z0-9-]+\.amazonaws\.com/.exec(await (await fetch(src)).text());
+      const m = /https:\/\/[a-z0-9]+\.execute-api\.[a-z0-9-]+\.amazonaws\.com|http:\/\/localhost:4000/.exec(await (await fetch(src)).text());
       if (m) return m[0];
     }
     return null;
@@ -98,7 +105,7 @@ async function main() {
   const foreign = await a.page.context().request.fetch(`${apiBase}/games`, {
     method: 'OPTIONS', headers: { origin: 'https://not-the-site.example', 'access-control-request-method': 'POST', 'access-control-request-headers': 'content-type' },
   });
-  if (foreign.headers()['access-control-allow-origin']) throw new Error('API allows a foreign origin');
+  if (['https://not-the-site.example', '*'].includes(foreign.headers()['access-control-allow-origin'] ?? '')) throw new Error('API allows a foreign origin');
   ok('CORS preflight succeeds for the site origin and not for another origin');
   await pick(a, 'Couples'); await pick(a, '4 Letters'); await pick(a, 'Medium');
   await a.page.getByLabel('Your name').fill('Ama');
@@ -117,48 +124,73 @@ async function main() {
   ok('A sees B as "● here" (presence pushed over WebSocket)');
   await closeDialogs(a);
 
-  let game = await fetchGame(a);
-  const solution = solve(getGraph(game.length), [game.start, ...game.slots.map(() => null), game.target])!;
-  const last = game.slots.length - 1;
-  console.log(`  ${game.start} → ${game.target}, ${game.slots.length} slots`);
+  let game: View = await fetchGame(a);
+  console.log(`  ${game.start} → ${game.target}, can be done in ${routeFor(game).length} moves`);
+  const ids = { a: (await session(a)).playerId as string, b: (await session(b)).playerId as string };
+  const mover = (g: View) => (g.turn === ids.a ? a : b);
 
-  await write(a, 0, 'ZZZZ'.slice(0, game.length));
+  if ((await a.page.locator('.word-row').count()) !== 1 || !(await a.page.locator(`[aria-label^="Start word ${game.start}"]`).count()))
+    throw new Error('the board should start with only the start word written on it');
+  if (!(await a.page.locator(`[aria-label="Goal: get from ${game.start} to ${game.target}"]`).count())) throw new Error('goal line missing');
+  ok(`The board shows only ${game.start}; the goal line names ${game.target}`);
+
+  if (!(await canType(a)) || (await canType(b))) throw new Error('A should move first and B should have to wait');
+  ok('A moves first; B has to wait for their turn');
+
+  const junk = ['Q', 'X', 'Z', 'J'].map((ch) => ch + game.start.slice(1)).find((w) => !getGraph(game.length).index.has(w))!;
+  await play(a, game.start, junk);
   await a.page.waitForFunction(() => document.querySelector('[role="status"]')?.textContent, undefined, T);
   game = await fetchGame(a);
-  if (game.slots[0].word || game.wrongAttempts < 1) throw new Error(`wrong word was not rejected: ${JSON.stringify(game.slots[0])}`);
-  ok('A\'s wrong word was rejected and counted');
+  if (game.chain.length || game.wrongAttempts < 1 || game.turn !== ids.a) throw new Error(`wrong word was not handled: ${JSON.stringify(game)}`);
+  ok(`A's non-word ${junk} was rejected, counted, and did not pass the turn`);
 
   const before = b.frames.received;
-  await write(a, 0, solution[1]!);
-  await locked(a, 0, solution[1]!);
-  await locked(b, 0, solution[1]!);
-  if (b.frames.received <= before) throw new Error('B saw the lock but received no WebSocket frame');
-  ok(`A locked ${solution[1]}; B saw it lock via WebSocket push`);
+  const first = routeFor(game)[0]!;
+  await play(a, game.start, first);
+  await sees(a, 1, first);
+  await sees(b, 1, first);
+  if (b.frames.received <= before) throw new Error('B saw the word but received no WebSocket frame');
+  await b.page.waitForFunction(() => !(document.querySelector('.touch-keyboard button') as HTMLButtonElement).disabled, undefined, T);
+  if (await canType(a)) throw new Error('A can still type after moving');
+  ok(`A changed one letter (${game.start} → ${first}); B saw it via WebSocket push and now has the turn`);
 
-  await write(b, last, solution[last + 1]!);
-  await locked(b, last, solution[last + 1]!);
-  await locked(a, last, solution[last + 1]!);
-  ok(`B locked the last line (${solution[last + 1]}); A saw it`);
+  game = await fetchGame(b);
+  const second = routeFor(game)[0]!;
+  await play(b, first, second);
+  await sees(b, 2, second);
+  await sees(a, 2, second);
+  ok(`B changed one letter (${first} → ${second}); A saw it`);
 
   await b.page.reload();
-  await locked(b, 0, solution[1]!);
-  await locked(b, last, solution[last + 1]!);
+  await sees(b, 1, first);
+  await sees(b, 2, second);
   ok('B reloaded and resumed the same board');
 
-  for (let i = 1; i < last; i++) {
-    const p = i % 2 ? b : a;
-    await write(p, i, solution[i + 1]!);
-    await locked(a, i, solution[i + 1]!);
-    await locked(b, i, solution[i + 1]!);
+  await a.page.getByRole('button', { name: 'Take Back' }).click();
+  await gone(a, 2);
+  await gone(b, 2);
+  game = await fetchGame(b);
+  if (game.chain.length !== 1 || game.turn !== ids.b) throw new Error(`take back went wrong: ${JSON.stringify(game)}`);
+  ok('Take Back removed the last word for both and returned the turn to B');
+
+  for (let n = 0; game.status === 'playing'; n++) {
+    if (n > 20) throw new Error('game did not finish');
+    const next = routeFor(game)[0]!;
+    await play(mover(game), current(game), next);
+    await sees(a, game.chain.length + 1, next);
+    await sees(b, game.chain.length + 1, next);
+    game = await fetchGame(a);
   }
+  if (current(game) !== game.target) throw new Error('game completed without reaching the target');
+  if (game.chain.some((c, i) => i > 0 && c.by === game.chain[i - 1]!.by)) throw new Error('players did not alternate');
   for (const p of [a, b]) await p.page.getByRole('dialog', { name: 'YOU GOT FROM THIS TO THAT!' }).waitFor(T);
-  ok('Ladder finished; both see "YOU GOT FROM THIS TO THAT!"');
+  ok(`They alternated to ${game.target}; both see "YOU GOT FROM THIS TO THAT!"`);
 
   await a.page.getByRole('dialog', { name: 'YOU GOT FROM THIS TO THAT!' }).getByRole('button', { name: 'New Game' }).click();
   for (const p of [a, b]) {
-    await p.page.waitForFunction((round) => !document.querySelector('[aria-label$=", locked"]') && !!document.querySelector('[aria-label="Word 1: empty"]') && round, game.round, T);
-    const g = await fetchGame(p);
-    if (g.round !== game.round + 1 || g.status !== 'playing') throw new Error(`${p.tag} round ${g.round}, status ${g.status}`);
+    await p.page.waitForFunction(() => document.querySelectorAll('.word-row').length === 1 && !!document.querySelector('[aria-label^="Start word"]'), undefined, T);
+    const g: View = await fetchGame(p);
+    if (g.round !== game.round + 1 || g.status !== 'playing' || g.chain.length) throw new Error(`${p.tag} round ${g.round}, status ${g.status}`);
   }
   ok('New Game dealt a new round to both players');
   if (a.frames.sockets < 1 || b.frames.sockets < 1) throw new Error('a player never opened a WebSocket');
@@ -169,7 +201,7 @@ async function main() {
   await solo.page.goto(SITE);
   await pick(solo, 'Solo');
   await solo.page.getByRole('button', { name: 'START GAME' }).click();
-  await solo.page.locator('[aria-label="Word 1: empty"]').waitFor(T);
+  await solo.page.locator('[aria-label^="Start word"]').waitFor(T);
   ok('Solo game starts');
 
   const pass = await newPlayer('pass');
@@ -178,7 +210,7 @@ async function main() {
   await pass.page.getByLabel('Player 1').fill('Ama');
   await pass.page.getByLabel('Player 2').fill('Kofi');
   await pass.page.getByRole('button', { name: 'START GAME' }).click();
-  await pass.page.locator('[aria-label="Word 1: empty"]').waitFor(T);
+  await pass.page.locator('[aria-label^="Start word"]').waitFor(T);
   ok('Pass-the-Phone game starts');
 
   await a.page.locator('[aria-label="Leave game"]').click();

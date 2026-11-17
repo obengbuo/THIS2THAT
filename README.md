@@ -1,21 +1,22 @@
 # FROM THIS TO THAT
 
 The viral whiteboard word game couples play — rebuilt so two people can play it **on the same
-board from anywhere**. Change one letter at a time to get from one word to another; every
-correct word gets a marker underline and is locked for good.
+board from anywhere**. The board starts with one word. Change one letter, pass it to your
+partner, and keep going, one letter each, until you reach the last word.
 
-- **Couples mode (long-distance):** one player starts a room and sends a link. Both write on the
-  same whiteboard in real time, see each other's handwriting appear letter by letter, see who is
-  on which line, and can send reactions (❤️ 😂 🔥 …).
+- **Couples mode (long-distance):** one player starts a room and sends a link. You take turns on
+  the same whiteboard in real time, watch your partner's letter change as they write it, and can
+  send reactions (❤️ 😂 🔥 …).
 - **Pass-the-Phone** and **Solo** modes, 4- and 5-letter words, Easy / Medium / Hard.
 - No accounts. Fresh, verified-solvable puzzle every game.
 
 ```
-COLD          start word (locked)
-CORD   ←  one letter changed, real word, still leads to WARM → green underline, locked
-CARD
-WARD
-WARM          target word (locked)
+get from COLD to WARM        ← the goal line
+COLD          the only word on the board at the start
+CORD   ←  Ama changed one letter
+CARD   ←  Kofi changed one letter
+WARD   ←  Ama
+WARM   ←  Kofi wrote the last word: done
 ```
 
 ## Contents
@@ -39,33 +40,33 @@ WARM          target word (locked)
 
 ## 1. Game mechanics
 
-- Every word has exactly 4 (or 5) letters.
-- Each word differs from the one above it by **exactly one letter, in place** — no rearranging,
-  adding or removing.
-- Every word must be in the game's dictionary and can be used only once per ladder.
-- The board shows exactly as many empty lines as the **shortest** route needs, so there is no
-  slack: a word is accepted only if a complete ladder is still possible with it in that line.
-- Lines can be solved in any order — top-down, bottom-up, or from the middle — and **any** valid
-  route is accepted, not one hidden answer.
-- A correct word is underlined in green and **permanently locked**. Undo and Reset only affect
-  unlocked drafts. Only **New Game** clears the board.
+- The board starts with **only the start word**. A goal line above it names the word to reach.
+- A move changes **exactly one letter, in place**, of the last word on the board — no
+  rearranging, adding or removing. Tap a letter, type its replacement, press **Check**.
+- The new word must be in the game's dictionary and must not already be on the board. If it
+  passes, it is written underneath and becomes the word the next move changes.
+- **Two players take turns**, one letter each (Couples and Pass-the-Phone). A rejected word does
+  not pass the turn; *pass* does. In Couples the first move waits for the partner to join, and
+  the other player starts the next round. Solo makes every move alone.
+- There is **no fixed number of moves and no hidden answer**: any route that reaches the target
+  wins, and writing the target ends the game. Fewer moves scores more.
+- Because words cannot repeat, a route can run into a dead end. **Take Back** removes the last
+  word for both players, returns the turn to whoever wrote it, and counts as a miss.
+  **New Game** wipes the board. A board holds at most 40 words.
 
-| Difficulty | Empty lines | Start/target vocabulary | Routes |
-|-----------|-------------|-------------------------|--------|
-| Easy      | 2–3         | everyday words          | at least 3 familiar routes |
-| Medium    | 4–5         | everyday words          | at least 2 familiar routes |
-| Hard      | 6–8         | familiar words          | at most 60 routes in total |
+| Difficulty | Fewest moves possible | Start/target vocabulary | Shortest routes |
+|-----------|-----------------------|-------------------------|-----------------|
+| Easy      | 3–4                   | everyday words          | at least 3 familiar ones |
+| Medium    | 5–6                   | everyday words          | at least 2 familiar ones |
+| Hard      | 7–9                   | familiar words          | at most 60 in total |
 
-**Scoring:** `(1000 − 1 pt per 2 s (max 500) − 100 × hints − 25 × misses) × multiplier`, never
-below 0. Multipliers: Easy 1.0, Medium 1.5, Hard 2.0.
+**Scoring:** `(1000 − 1 pt per 2 s (max 500) − 100 × hints − 25 × misses − 30 × moves beyond the
+fewest possible) × multiplier`, never below 0. Multipliers: Easy 1.0, Medium 1.5, Hard 2.0.
 
-**Hints** (each costs 100 points): *Show next move* highlights a line you can solve from the
-words already on the board; *Reveal a letter* shows one letter of a word that fits the selected
-line; *Suggest a word* writes a fitting word for you to check (it is not locked automatically).
-Hints are computed from the current board, so they never lead to a dead end.
-
-**Turns:** Pass-the-Phone always alternates. Couples can optionally "take turns". A turn passes
-after every checked word (right or wrong) or when you press *pass*.
+**Hints** (each costs 100 points): *Which letter?* points at the letter of the current word to
+change; *Show me the move* writes the next word for you to check (it is not played
+automatically). Hints follow a shortest remaining route from the current word that avoids words
+already on the board, and say so when the board is in a dead end.
 
 ## 2. Architecture
 
@@ -129,24 +130,21 @@ words. Rebuild with `npm run build:dictionary`.
 **Recent history.** The last 60 start/target pairs per device (and per room) are excluded, in
 both directions, and the generator avoids reusing the previous few start/target words.
 
-**Validating a word.** Because the number of lines equals the shortest distance, every full
-solution is a shortest path, so each stretch between two fixed words must itself be a shortest
-path. A word `W` fits line `i` exactly when
+**Validating a move.** A move is checked only against the last word on the board: the right
+length, exactly one letter different in place, in the dictionary, and not already on the board.
+Rejections carry a reason: *Words need exactly 4 letters*, *Change exactly one letter of COLD*,
+*COLZ is not a word we know*, *CORD is already on the board*. The generator still guarantees a
+shortest route of the advertised length exists; players are free to take a longer one.
 
-```
-dist(nearest fixed word above, W) == lines between them
-dist(W, nearest fixed word below) == lines between them
-```
+**Hints and dead ends.** A breadth-first search from the target over the words not yet used
+gives the shortest remaining route from the current word. Hints follow it; if there is none,
+the hint says to take the last word back.
 
-Two bounded BFS runs answer that exactly: any valid route is accepted, and a word that would
-make the puzzle unfinishable is rejected. Rejections carry a reason: *Not a valid English word*,
-*Change exactly one letter…*, *This word doesn't fit the selected position*, *That word is
-already used*.
-
-**Locking.** The game record carries a `version`; every write is a conditional write on it. If
-two players submit at once, one write wins, the other is re-validated against the new state and
-either locks its own line or is told the line was just taken. No operation exists that edits or
-clears a locked line except starting a new round.
+**Concurrency.** The game record carries a `version`; every write is a conditional write on it.
+A move carries the number of words its author saw on the board, so a retry or double tap of a
+move that already landed is a harmless success, and a move written against an older board is
+turned away as stale without counting as a miss. Earlier words are never edited: the only
+operations that remove words are Take Back (the last word) and New Game (the whole board).
 
 ## 4. Run it locally
 
@@ -184,11 +182,12 @@ npm run test:stress  # 60,000 puzzles
 npm run typecheck
 ```
 
-59 tests cover: valid 4- and 5-letter ladders, non-words, wrong lengths, multi-letter changes,
-repeats, wrong-position words, alternative routes, any-order solving, locked words surviving
-edit / undo / reset, generation at every difficulty, randomisation, recent-history exclusion,
-fallbacks, hints, scoring, concurrent submissions to the same and to different lines, turn
-order, reconnecting players, completion, statistics, and input rejection over HTTP.
+64 tests cover: valid 4- and 5-letter ladders, non-words, wrong lengths, multi-letter changes,
+repeats, moves checked against the last word only, routes of any length and their score,
+shortest remaining routes and dead ends, generation at every difficulty, randomisation,
+recent-history exclusion, fallbacks, hints, scoring, the one-letter draft, strict turn order,
+waiting for a partner, take-back, retried and racing submissions, reconnecting players,
+completion, statistics, old-format rooms, and input rejection over HTTP.
 
 Stress report from the last run (10,000 puzzles):
 
@@ -216,17 +215,20 @@ when you create or join a game). Errors are `{ "error": { "code", "message" } }`
 | Method | Path | Auth | Body | Returns |
 |--------|------|------|------|---------|
 | GET  | `/health` | – | – | `{ ok }` |
-| POST | `/games` | – | `{ length: 4\|5, difficulty, mode: solo\|couples\|pass, turnBased?, name, partnerName?, deviceId }` | `{ session: { code, playerId, token }, game }` |
+| POST | `/games` | – | `{ length: 4\|5, difficulty, mode: solo\|couples\|pass, name, partnerName?, deviceId }` | `{ session: { code, playerId, token }, game }` |
 | POST | `/games/{code}/join` | – | `{ name, deviceId }` | `{ session, game }` |
 | GET  | `/games/{code}` | ✓ | – | `{ game }` |
-| POST | `/games/{code}/submit` | ✓ | `{ slot, word }` | `{ accepted: true, game }` or `{ accepted: false, code, message, game }` |
-| POST | `/games/{code}/hint` | ✓ | `{ type: next\|letter\|word, slot? }` | `{ hint, game }` |
+| POST | `/games/{code}/submit` | ✓ | `{ word, after? }` | `{ accepted: true, game }` or `{ accepted: false, code, message, game }` |
+| POST | `/games/{code}/undo` | ✓ | `{}` | `{ game }` (takes back the last word) |
+| POST | `/games/{code}/hint` | ✓ | `{ type: next\|letter\|word }` | `{ hint, game }` |
 | POST | `/games/{code}/pass` | ✓ | `{}` | `{ game }` |
 | POST | `/games/{code}/new` | ✓ | `{ length?, difficulty? }` | `{ game }` (new round, same room) |
 | GET  | `/stats/{deviceId}` | – | – | `{ stats }` |
 
-`slot` is the zero-based index of the empty line. Rejection codes: `bad_length`, `not_a_word`,
-`already_used`, `not_one_letter`, `wrong_position`, `slot_locked`. Types live in
+`game.chain` lists the words written after `game.start`, each with who wrote it. `after` is how
+many words were on the board when the move was written. Rejection codes: `bad_length`,
+`not_a_word`, `already_used`, `not_one_letter`, `stale`. Refusals such as `not_your_turn`,
+`waiting`, `completed`, `board_full` and `nothing_to_undo` are HTTP 409 errors. Types live in
 `packages/shared-types`.
 
 ## 7. Real-time design
@@ -237,12 +239,11 @@ the credentials match a player in that room.
 | Direction | Message | Meaning |
 |-----------|---------|---------|
 | client → server | `{ type: "hello" }` | first message after open: re-sync state, announce presence |
-| client → server | `{ type: "draft", slot, text }` | what I am writing right now (not saved) |
-| client → server | `{ type: "focus", slot }` | which line my cursor is on |
+| client → server | `{ type: "draft", after, text, cursor }` | the letter I am changing right now (not saved) |
 | client → server | `{ type: "reaction", emoji }` | one of a fixed set of emoji |
 | client → server | `{ type: "ping" }` | keep-alive (every 25 s) |
 | server → client | `{ type: "state", game, event? }` | authoritative board after any change |
-| server → client | `draft` / `focus` / `reaction` with `playerId` | partner signals, relayed only to the other player |
+| server → client | `draft` / `reaction` with `playerId` | partner signals, relayed only to the other player |
 
 Clients ignore any state older than the one they hold (`round`, then `version`). Reconnection
 uses exponential backoff; on every open the client sends `hello` and receives the full state.
@@ -254,7 +255,7 @@ One on-demand table, keys `pk` (string) / `sk` (string), TTL attribute `expiresA
 
 | Item | pk | sk | Contents | TTL |
 |------|----|----|----------|-----|
-| Game session | `GAME#<code>` | `STATE` | settings, start/target, stored solution, lines with locked word + who locked it + revealed letters, players (hashed tokens), turn, timers, counters, result, recent pairs, `version` | 24 h after the last new round |
+| Game session | `GAME#<code>` | `STATE` | settings, start/target, stored solution, the words written so far + who wrote each, hint letters for the next move, players (hashed tokens), turn, timers, counters, result, recent pairs, `version` | 24 h after the last new round |
 | Connection | `GAME#<code>` | `CONN#<connectionId>` | player id | 3 h |
 | Connection lookup | `CONN#<connectionId>` | `META` | room code (for `$disconnect`) | 3 h |
 | Player profile | `PLAYER#<deviceId>` | `PROFILE` | statistics, recent puzzle history, `version` | 180 days idle |
@@ -351,7 +352,7 @@ npx cdk destroy   # remove the stack
 
 - **Server-side validation of everything.** The client is never trusted; the stored solution is
   never sent to it.
-- **Input bounds:** room codes, device ids, slots, hint types and modes are checked against
+- **Input bounds:** room codes, device ids, move markers, hint types and modes are checked against
   strict patterns; names are stripped of control and markup characters and cut to 16
   characters; request bodies are capped at 2 KB; WebSocket frames at 512 bytes with a fixed
   message vocabulary.
@@ -361,7 +362,7 @@ npx cdk destroy   # remove the stack
 - **Sessions:** each player gets a 256-bit random token; only its SHA-256 hash is stored, and it
   is compared in constant time. Every game action and the WebSocket handshake require it.
 - **Expiry:** rooms expire after 24 hours, connections after 3 hours.
-- **Atomic locking / duplicate submissions:** conditional writes on a version number;
+- **Atomic moves / duplicate submissions:** conditional writes on a version number;
   re-submitting the same word is idempotent.
 - **Throttling:** API Gateway stage throttles (HTTP 50 req/s, burst 100; WebSocket 100/200); the
   dev server has a per-address token bucket.
@@ -425,7 +426,8 @@ app uses them.
 - **Verified once on AWS, by hand-run script.** The stack was deployed to `us-east-1` and
   `scripts/verify-live.ts` played a full two-player Couples game through real browsers against
   the live API Gateway, Lambdas and DynamoDB table: create, join by invite link, presence,
-  a rejected word, locks pushed over the WebSocket, reload and resume, the win dialog, a new
+  turn order, a rejected word, moves pushed over the WebSocket, reload and resume, take back,
+  the win dialog, a new
   round, Solo and Pass-the-Phone starts, and Statistics. The CloudWatch logs showed no errors.
   The first run missed a real bug — CORS preflights were routed to the Lambda and got a 404,
   so real browsers could not start a game — because Playwright answers preflights itself when

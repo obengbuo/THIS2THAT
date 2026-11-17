@@ -1,8 +1,5 @@
 import { createHash, randomBytes, randomInt, timingSafeEqual } from 'node:crypto';
-import {
-  buildResult, checkPlacement, generatePuzzle, getGraph, HintError, isComplete, nextMove, pairKey, revealLetter, suggestWord,
-  type Chain, type Puzzle, type Revealed,
-} from '@ftt/game-engine';
+import { buildResult, checkStep, generatePuzzle, getGraph, HintError, hintFor, pairKey, type Ladder, type Puzzle } from '@ftt/game-engine';
 import {
   REACTIONS,
   type ClientSocketMessage, type CreateGameRequest, type GameEvent, type GameView, type HintPayload, type HintResponse,
@@ -11,7 +8,7 @@ import {
 } from '@ftt/shared-types';
 import { ApiError, badRequest, conflict, notFound, unauthorized } from './errors';
 import {
-  CODE_ALPHABET, CODE_LENGTH, parseCode, parseDeviceId, parseDifficulty, parseHintType, parseLength, parseMode, parseName, parseSlot, parseWord,
+  CODE_ALPHABET, CODE_LENGTH, parseCode, parseDeviceId, parseDifficulty, parseHintType, parseLength, parseAfter, parseMode, parseName, parseWord,
 } from './sanitize';
 import { VersionConflict, type GameStore, type StoredGame, type StoredPlayer, type StoredProfile } from './store/types';
 
@@ -32,6 +29,8 @@ const CONNECTION_TTL = 3 * 60 * 60;
 const PROFILE_TTL = 180 * 24 * 60 * 60;
 const RECENT_PAIRS = 60;
 const MAX_RETRIES = 8;
+/** Longest ladder a board will hold; beyond this players must take a word back. */
+export const MAX_MOVES = 40;
 
 const sha256 = (value: string) => createHash('sha256').update(value).digest('hex');
 const newToken = () => randomBytes(32).toString('base64url');
@@ -43,8 +42,9 @@ const emptyStats = (): PlayerStats => ({
   currentStreak: 0, bestStreak: 0, bestTimeMs: null, bestScore: 0, totalScore: 0,
 });
 
-const chainOf = (game: StoredGame): Chain => [game.start, ...game.slots.map((s) => s.word), game.target];
-const revealedOf = (game: StoredGame): Revealed => [undefined, ...game.slots.map((s) => s.revealed), undefined];
+/** The ladder so far, start word first. */
+const wordsOf = (game: StoredGame): Ladder => [game.start, ...game.chain.map((s) => s.word)];
+const blank = (length: number) => Array<string | null>(length).fill(null);
 
 /**
  * The authoritative game service. Transport-agnostic: the Lambda handlers and the local
@@ -79,7 +79,9 @@ export class GameService {
       turnBased: game.turnBased,
       start: game.start,
       target: game.target,
-      slots: game.slots.map((s) => ({ word: s.word, lockedBy: s.lockedBy, revealed: s.revealed })),
+      chain: game.chain.map((s) => ({ word: s.word, by: s.by })),
+      revealed: game.revealed,
+      optimalMoves: game.optimalMoves,
       players: game.players.map((p) => ({ id: p.id, name: p.name, connected: online.has(p.id) })),
       turn: game.turnBased ? game.players[game.turn]?.id ?? null : null,
       status: game.completedAt ? 'completed' : 'playing',
@@ -105,7 +107,8 @@ export class GameService {
 
   private async load(codeInput: unknown): Promise<StoredGame> {
     const game = await this.store.getGame(parseCode(codeInput));
-    if (!game) throw notFound();
+    // Rooms saved by an older version of the game (a different board shape) are gone.
+    if (!game || !Array.isArray(game.chain)) throw notFound();
     return game;
   }
 
@@ -228,9 +231,9 @@ export class GameService {
     game.start = puzzle.start;
     game.target = puzzle.target;
     game.solution = puzzle.solution;
-    game.slots = Array.from({ length: puzzle.slots }, () => ({
-      word: null, lockedBy: null, lockedAt: null, revealed: Array<string | null>(puzzle.length).fill(null),
-    }));
+    game.optimalMoves = puzzle.slots + 1;
+    game.chain = [];
+    game.revealed = blank(puzzle.length);
     game.recentPairs = [...game.recentPairs, pairKey(puzzle.start, puzzle.target)].slice(-RECENT_PAIRS);
     // Couples rooms start the clock when the partner arrives (or on the first move).
     game.startedAt = game.mode === 'couples' && game.players.length < 2 ? null : now;
@@ -255,8 +258,8 @@ export class GameService {
     const game: StoredGame = {
       code: '', version: 1, round: 1, createdAt: this.now(), expiresAt: 0,
       length: parseLength(body.length), difficulty: parseDifficulty(body.difficulty), mode,
-      turnBased: mode === 'pass' ? true : mode === 'couples' ? body.turnBased === true : false,
-      start: '', target: '', solution: [], slots: [], players, turn: 0,
+      turnBased: mode !== 'solo', // two players always take turns: one letter each
+      start: '', target: '', solution: [], optimalMoves: 0, chain: [], revealed: [], players, turn: 0,
       startedAt: null, completedAt: null, hintsUsed: 0, wrongAttempts: 0, correctSubmissions: 0, result: null, recentPairs: [],
     };
     this.applyPuzzle(game, await this.deal(game));
@@ -297,79 +300,95 @@ export class GameService {
   }
 
   /**
-   * Validates a word for a slot and, if it fits, locks it permanently. This is the
-   * only code path that writes a word to a slot, and it only ever writes to an empty
-   * one — there is no operation that edits or clears a locked slot.
+   * Plays one move: checks the word against the last word on the board and, if it is a
+   * real word exactly one letter away that has not been used, writes it underneath and
+   * hands the turn to the other player. Writing the target word completes the game.
    */
-  async submitWord(session: Session, body: { slot?: unknown; word?: unknown }): Promise<SubmitResponse> {
+  async submitWord(session: Session, body: { word?: unknown; after?: unknown }): Promise<SubmitResponse> {
     const word = parseWord(body.word);
+    const after = parseAfter(body.after);
     let completedNow = false;
     let actor = '';
-    let slot = -1;
 
     const { game, value, changed } = await this.transact(session.code, (g) => {
       completedNow = false;
       const player = this.authorize(g, session);
-      slot = parseSlot(body.slot, g.slots.length);
-      const active = g.turnBased ? g.players[g.turn]! : player;
+      const active = g.turnBased ? g.players[g.turn] ?? player : player;
       actor = active.id;
+      // A retry or double tap of a move that already landed: harmless.
+      if (after !== undefined && g.chain[after]?.word === word) return { ok: true as const, word };
       if (g.completedAt) throw conflict('This puzzle is already complete.', 'completed');
-      if (g.turnBased && g.mode === 'couples' && active.id !== player.id) throw conflict(`It's ${active.name}'s turn.`, 'not_your_turn');
+      if (g.mode === 'couples' && g.players.length < 2) throw conflict('Waiting for your partner to join.', 'waiting');
+      if (g.mode === 'couples' && active.id !== player.id) throw conflict(`It's ${active.name}'s turn.`, 'not_your_turn');
+      // The board moved on since this was written (not counted as a mistake).
+      if (after !== undefined && after !== g.chain.length)
+        return { ok: false as const, code: 'stale' as const, message: 'The board changed. Try again from the new word.' };
+      if (g.chain.length >= MAX_MOVES) throw conflict('The board is full. Take back a word or start a new game.', 'board_full');
 
-      const existing = g.slots[slot]!;
-      // Duplicate submission (double tap, retry, or both partners at once): idempotent.
-      if (existing.word === word) return { ok: true as const, word };
-      const placement = checkPlacement(getGraph(g.length), chainOf(g), slot + 1, word);
-      // A slot the other player just locked is reported, not counted as a mistake.
-      if (!placement.ok && placement.code === 'slot_locked') return placement;
-
+      const placement = checkStep(getGraph(g.length), wordsOf(g), word);
       const now = this.now();
       if (g.startedAt === null) g.startedAt = now;
-      if (placement.ok) {
-        g.slots[slot] = { ...existing, word: placement.word, lockedBy: active.id, lockedAt: now };
-        g.correctSubmissions += 1;
-        if (isComplete(chainOf(g))) {
-          g.completedAt = now;
-          g.result = buildResult({
-            difficulty: g.difficulty, elapsedMs: now - g.startedAt, hintsUsed: g.hintsUsed,
-            wrongAttempts: g.wrongAttempts, correctSubmissions: g.correctSubmissions,
-          });
-          completedNow = true;
-        }
-      } else {
-        g.wrongAttempts += 1;
+      if (!placement.ok) {
+        g.wrongAttempts += 1; // a wrong word does not pass the turn
+        return placement;
       }
-      if (g.turnBased && g.players.length > 1 && !g.completedAt) g.turn = (g.turn + 1) % g.players.length;
+      g.chain.push({ word: placement.word, by: active.id, at: now });
+      g.revealed = blank(g.length);
+      g.correctSubmissions += 1;
+      if (placement.word === g.target) {
+        g.completedAt = now;
+        g.result = buildResult({
+          difficulty: g.difficulty, elapsedMs: now - g.startedAt, hintsUsed: g.hintsUsed, wrongAttempts: g.wrongAttempts,
+          correctSubmissions: g.correctSubmissions, moves: g.chain.length, optimalMoves: g.optimalMoves,
+        });
+        completedNow = true;
+      } else if (g.players.length > 1) g.turn = (g.turn + 1) % g.players.length;
       return placement;
     });
 
     if (changed && completedNow) await this.recordCompletion(game);
     const event: GameEvent | undefined = !changed
       ? undefined
-      : completedNow ? { kind: 'completed' } : value.ok ? { kind: 'locked', slot, playerId: actor } : { kind: 'rejected', slot, playerId: actor };
+      : completedNow ? { kind: 'completed' } : value.ok ? { kind: 'locked', playerId: actor } : { kind: 'rejected', playerId: actor };
     const view = changed ? await this.broadcast(game, event) : await this.view(game);
     return value.ok ? { accepted: true, game: view } : { accepted: false, code: value.code, message: value.message, game: view };
   }
 
-  async requestHint(session: Session, body: { type?: unknown; slot?: unknown }): Promise<HintResponse> {
+  /**
+   * Takes the last word back off the board (the way out of a dead end). Either player
+   * may do it; the turn returns to whoever wrote that word. Counts as a miss.
+   */
+  async undoWord(session: Session): Promise<GameView> {
+    let actor = '';
+    const { game } = await this.transact(session.code, (g) => {
+      actor = this.authorize(g, session).id;
+      if (g.completedAt) throw conflict('This puzzle is already complete.', 'completed');
+      const last = g.chain.pop();
+      if (!last) throw conflict('There is nothing to take back.', 'nothing_to_undo');
+      const writer = g.players.findIndex((p) => p.id === last.by);
+      if (g.players.length > 1 && writer >= 0) g.turn = writer;
+      g.revealed = blank(g.length);
+      g.wrongAttempts += 1;
+    });
+    return this.broadcast(game, { kind: 'undone', playerId: actor });
+  }
+
+  async requestHint(session: Session, body: { type?: unknown }): Promise<HintResponse> {
     const type = parseHintType(body.type);
     let actor = '';
     const { game, value } = await this.transact(session.code, (g) => {
       actor = this.authorize(g, session).id;
       if (g.completedAt) throw conflict('This puzzle is already complete.', 'completed');
-      const position = body.slot === undefined || body.slot === null ? undefined : parseSlot(body.slot, g.slots.length) + 1;
-      const graph = getGraph(g.length);
       let hint: HintPayload;
       try {
-        if (type === 'next') hint = nextMove(graph, chainOf(g));
-        else if (type === 'word') hint = suggestWord(graph, chainOf(g), position, revealedOf(g));
-        else {
-          hint = revealLetter(graph, chainOf(g), position, revealedOf(g));
-          g.slots[hint.slot]!.revealed[hint.index] = hint.letter;
-        }
+        hint = hintFor(getGraph(g.length), wordsOf(g), g.target, type, g.revealed);
       } catch (err) {
         if (err instanceof HintError) throw conflict(err.message, 'no_hint');
         throw err;
+      }
+      if (hint.type === 'letter') {
+        g.revealed = blank(g.length);
+        g.revealed[hint.index] = hint.letter;
       }
       if (g.startedAt === null) g.startedAt = this.now();
       g.hintsUsed += 1;
@@ -388,7 +407,7 @@ export class GameService {
     return changed ? this.broadcast(game, { kind: 'turn' }) : this.view(game);
   }
 
-  /** New Game inside a room: the only operation that clears locked words. */
+  /** New Game inside a room: wipes the board and deals a fresh pair of words. */
   async newRound(session: Session, body: Partial<NewRoundRequest>): Promise<GameView> {
     const current = await this.load(session.code);
     this.authorize(current, session);
@@ -457,11 +476,9 @@ export class GameService {
     const conn = await this.store.getConnection(connectionId);
     if (!conn) return;
     let out: ServerSocketMessage;
-    const validSlot = (s: unknown): s is number => typeof s === 'number' && Number.isInteger(s) && s >= 0 && s < 16;
-    if (msg.type === 'draft' && validSlot(msg.slot) && typeof msg.text === 'string' && /^[A-Za-z]{0,5}$/.test(msg.text))
-      out = { type: 'draft', playerId: conn.playerId, slot: msg.slot, text: msg.text.toUpperCase() };
-    else if (msg.type === 'focus' && (msg.slot === null || validSlot(msg.slot)))
-      out = { type: 'focus', playerId: conn.playerId, slot: msg.slot };
+    const small = (n: unknown, max: number): n is number => typeof n === 'number' && Number.isInteger(n) && n >= 0 && n <= max;
+    if (msg.type === 'draft' && small(msg.after, MAX_MOVES) && small(msg.cursor, 4) && typeof msg.text === 'string' && /^[A-Za-z]{4,5}$/.test(msg.text))
+      out = { type: 'draft', playerId: conn.playerId, after: msg.after, text: msg.text.toUpperCase(), cursor: msg.cursor };
     else if (msg.type === 'reaction' && (REACTIONS as readonly string[]).includes(msg.emoji))
       out = { type: 'reaction', playerId: conn.playerId, emoji: msg.emoji };
     else return;

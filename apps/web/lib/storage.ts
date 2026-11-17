@@ -6,12 +6,11 @@ export interface Prefs {
   length: WordLength;
   difficulty: Difficulty;
   mode: GameMode;
-  turnBased: boolean;
   sound: boolean;
 }
 
 export const DEFAULT_PREFS: Prefs = {
-  name: '', partnerName: '', length: 4, difficulty: 'easy', mode: 'couples', turnBased: false, sound: true,
+  name: '', partnerName: '', length: 4, difficulty: 'easy', mode: 'couples', sound: true,
 };
 
 function read<T>(key: string): T | null {

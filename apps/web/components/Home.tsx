@@ -27,7 +27,7 @@ export function Home({ ctrl, prefs, updatePrefs }: { ctrl: GameController; prefs
 
   const start = () =>
     actions.start({
-      length: prefs.length, difficulty: prefs.difficulty, mode: prefs.mode, turnBased: prefs.mode === 'couples' && prefs.turnBased,
+      length: prefs.length, difficulty: prefs.difficulty, mode: prefs.mode,
       name: prefs.name.trim() || 'Player 1', partnerName: prefs.partnerName.trim() || 'Player 2',
     });
 
@@ -47,7 +47,7 @@ export function Home({ ctrl, prefs, updatePrefs }: { ctrl: GameController; prefs
           </h1>
           <p className="mt-2 font-marker text-2xl text-ink-soft">Can you connect the words?</p>
           <p className="mx-auto mt-1 max-w-[34ch] text-[15px] leading-snug text-ink-soft">
-            The whiteboard word game for two — one board, two markers, even when you&apos;re miles apart.
+            Change one letter, pass it to your partner, and keep going until you reach the last word — even when you&apos;re miles apart.
           </p>
         </div>
         <div className="board-tray" aria-hidden />
@@ -65,22 +65,16 @@ export function Home({ ctrl, prefs, updatePrefs }: { ctrl: GameController; prefs
         <Segmented label="Word length" value={prefs.length} onChange={(length) => updatePrefs({ length })} options={[{ value: 4, label: '4 Letters' }, { value: 5, label: '5 Letters' }]} />
         <Segmented
           label="Difficulty" value={prefs.difficulty} onChange={(difficulty) => updatePrefs({ difficulty })}
-          options={[{ value: 'easy', label: 'Easy', hint: '2–3 words' }, { value: 'medium', label: 'Medium', hint: '4–5 words' }, { value: 'hard', label: 'Hard', hint: '6–8 words' }]}
+          options={[{ value: 'easy', label: 'Easy', hint: '3–4 moves' }, { value: 'medium', label: 'Medium', hint: '5–6 moves' }, { value: 'hard', label: 'Hard', hint: '7–9 moves' }]}
         />
         <div className={`grid gap-2 ${prefs.mode === 'pass' ? 'grid-cols-2' : ''}`}>
           <TextField label={prefs.mode === 'pass' ? 'Player 1' : 'Your name'} value={prefs.name} maxLength={16} autoComplete="given-name" placeholder="e.g. Ama" onChange={(e) => updatePrefs({ name: e.target.value })} />
           {prefs.mode === 'pass' && <TextField label="Player 2" value={prefs.partnerName} maxLength={16} placeholder="e.g. Kofi" onChange={(e) => updatePrefs({ partnerName: e.target.value })} />}
         </div>
-        {prefs.mode === 'couples' && (
-          <label className="flex cursor-pointer items-center gap-3 rounded-2xl bg-wall px-3 py-2.5">
-            <input type="checkbox" className="size-5 accent-ink" checked={prefs.turnBased} onChange={(e) => updatePrefs({ turnBased: e.target.checked })} />
-            <span className="leading-tight">Take turns <span className="block text-sm text-ink-soft">otherwise you both write freely</span></span>
-          </label>
-        )}
         <Button type="submit" className="w-full py-4 font-title text-2xl tracking-wide" disabled={busy}>
           {busy ? 'DEALING…' : 'START GAME'}
         </Button>
-        {prefs.mode === 'couples' && <p className="text-center text-sm text-ink-soft">You&apos;ll get a link to send to your partner.</p>}
+        {prefs.mode === 'couples' && <p className="text-center text-sm text-ink-soft">You&apos;ll get a link to send to your partner. You take turns, one letter each.</p>}
       </form>
 
       <div className="grid grid-cols-3 gap-2">

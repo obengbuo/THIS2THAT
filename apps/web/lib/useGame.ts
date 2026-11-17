@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { applyLocks, backspace as eraseLetter, createBoard, firstOpenSlot, resetDrafts, setDraft, typeLetter, undo as undoDraft, type Board } from '@ftt/game-engine/board';
+import { changedAt, clearDraft, moveCursor, newDraft, setWord, typeLetter, type Draft } from '@ftt/game-engine/board';
 import type { CreateGameRequest, Difficulty, GameView, HintType, ServerSocketMessage, Session, WordLength } from '@ftt/shared-types';
 import { api, ApiClientError } from './api';
 import { RoomSocket, type LinkStatus } from './socket';
@@ -18,29 +18,35 @@ export interface FloatingReaction {
   emoji: string;
   mine: boolean;
 }
-interface Peer {
-  drafts: Record<number, string>;
-  focus: number | null;
+/** What my partner is writing right now (valid only while `after` matches the board). */
+export interface PeerDraft {
+  after: number;
+  text: string;
+  cursor: number;
 }
 
 let nonce = 0;
 const roundKey = (g: GameView) => `${g.code}:${g.round}`;
+/** The word the next move changes: the last one on the board. */
+export const currentWord = (g: GameView) => g.chain.at(-1)?.word ?? g.start;
 
 /**
- * All client game state. The server is the source of truth for locked words; this hook
- * layers local drafts (Board) on top and keeps both in sync over HTTP + WebSocket.
+ * All client game state. The server is the source of truth for the words on the board;
+ * this hook layers the local draft of the next move on top and keeps both in sync over
+ * HTTP + WebSocket.
  */
 export function useGame() {
   const [session, setSession] = useState<Session | null>(null);
   const [game, setGame] = useState<GameView | null>(null);
-  const [board, setBoard] = useState<Board | null>(null);
-  const [selected, setSelected] = useState<number | null>(null);
+  const [draft, setDraft] = useState<Draft | null>(null);
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(true);
-  const [rejected, setRejected] = useState<{ slot: number; nonce: number } | null>(null);
+  /** Bumps whenever a move is refused, so the board can shake. */
+  const [rejected, setRejected] = useState(0);
+  /** Letter position a hint is pointing at. */
   const [highlight, setHighlight] = useState<number | null>(null);
   const [toast, setToast] = useState<Toast | null>(null);
-  const [peer, setPeer] = useState<Peer>({ drafts: {}, focus: null });
+  const [peer, setPeer] = useState<PeerDraft | null>(null);
   const [reactions, setReactions] = useState<FloatingReaction[]>([]);
   const [link, setLink] = useState<LinkStatus>('connecting');
   const [clockOffset, setClockOffset] = useState(0);
@@ -65,36 +71,22 @@ export function useGame() {
 
     // Sounds for things that changed (covers both my own moves and my partner's).
     if (prev && !newRound) {
-      const before = prev.slots.filter((s) => s.word).length;
-      const after = view.slots.filter((s) => s.word).length;
       if (view.status === 'completed' && prev.status !== 'completed') sound.win();
-      else if (after > before) sound.lock();
+      else if (view.chain.length > prev.chain.length) sound.lock();
+      else if (view.chain.length < prev.chain.length) sound.erase();
       if (view.players.length > prev.players.length) sound.partner();
     } else if (prev && sameRoom) sound.wipe();
 
     latest.current = view;
     setClockOffset(view.serverNow - Date.now());
     setGame(view);
-    const words = view.slots.map((s) => s.word);
-    setBoard((b) => (newRound || !b ? applyLocks(createBoard(view.length, view.slots.length), words) : applyLocks(b, words)));
-    if (newRound) {
-      setPeer({ drafts: {}, focus: null });
-      setHighlight(null);
-      setRejected(null);
-      setSelected(null);
-    } else
-      setPeer((p) => {
-        const drafts = { ...p.drafts };
-        words.forEach((w, i) => w && delete drafts[i]);
-        return { ...p, drafts };
-      });
+    // The draft always starts from the last word on the board.
+    const base = currentWord(view);
+    setDraft((d) => (!d || newRound || d.base !== base ? newDraft(base, newRound ? 0 : d?.cursor ?? 0) : d));
+    if (newRound || !prev || currentWord(prev) !== base) setHighlight(null);
+    if (newRound) setRejected(0);
+    setPeer((p) => (p && !newRound && p.after === view.chain.length ? p : null));
   }, []);
-
-  // Keep the cursor on an open slot.
-  useEffect(() => {
-    if (!board) return;
-    if (selected === null || board.slots[selected]?.locked) setSelected(firstOpenSlot(board, (selected ?? -1) + 1));
-  }, [board, selected]);
 
   const enter = useCallback((next: Session, view: GameView) => {
     sessionRef.current = next;
@@ -112,8 +104,8 @@ export function useGame() {
     saveSession(null);
     setSession(null);
     setGame(null);
-    setBoard(null);
-    setSelected(null);
+    setDraft(null);
+    setPeer(null);
     setReactions([]);
   }, []);
 
@@ -141,9 +133,9 @@ export function useGame() {
           const name = msg.game.players.find((p) => p.id === (msg.event as { playerId: string }).playerId)?.name;
           notify(`${name ?? 'Your partner'} joined the board 💛`, 'success');
         } else if (msg.event?.kind === 'hint' && msg.event.playerId !== me) notify('Your partner used a hint 💡', 'hint');
-        else if (msg.event?.kind === 'rejected' && msg.event.playerId !== me) setRejected({ slot: msg.event.slot, nonce: ++nonce });
-      } else if (msg.type === 'draft') setPeer((p) => ({ ...p, drafts: { ...p.drafts, [msg.slot]: msg.text } }));
-      else if (msg.type === 'focus') setPeer((p) => ({ ...p, focus: msg.slot }));
+        else if (msg.event?.kind === 'rejected' && msg.event.playerId !== me) setRejected(++nonce);
+        else if (msg.event?.kind === 'undone' && msg.event.playerId !== me) notify('Your partner took back the last word.', 'info');
+      } else if (msg.type === 'draft') setPeer(msg.after === latest.current?.chain.length ? { after: msg.after, text: msg.text, cursor: msg.cursor } : null);
       else if (msg.type === 'reaction') {
         sound.partner();
         addReaction(msg.emoji, false);
@@ -165,14 +157,15 @@ export function useGame() {
     return () => clearInterval(id);
   }, [session, live, link, applyView]);
 
-  // Share my handwriting and cursor with my partner as I write.
-  const myDraft = selected !== null && board && !board.slots[selected]?.locked ? board.slots[selected]!.text : '';
+  const me = session?.playerId ?? null;
+  const canPlay = !!game && game.status === 'playing'
+    && (game.mode !== 'couples' || (game.players.length > 1 && game.turn === me));
+
+  // Share the letter I am changing with my partner as I write.
+  const after = game?.chain.length ?? 0;
   useEffect(() => {
-    if (live && selected !== null) socketRef.current?.send({ type: 'draft', slot: selected, text: myDraft });
-  }, [live, selected, myDraft, link]);
-  useEffect(() => {
-    if (live) socketRef.current?.send({ type: 'focus', slot: selected });
-  }, [live, selected, link]);
+    if (live && canPlay && draft) socketRef.current?.send({ type: 'draft', after, text: draft.text, cursor: draft.cursor });
+  }, [live, canPlay, after, draft, link]);
 
   const addReaction = (emoji: string, mine: boolean) => {
     const id = ++nonce;
@@ -180,14 +173,11 @@ export function useGame() {
     setTimeout(() => setReactions((r) => r.filter((x) => x.id !== id)), 2600);
   };
 
-  const me = session?.playerId ?? null;
-  const canPlay = !!game && game.status === 'playing' && (!game.turnBased || game.mode === 'pass' || game.turn === me);
-
   const fail = useCallback((err: unknown) => {
     const message = err instanceof ApiClientError ? err.message : 'Something went wrong.';
     notify(message, 'error');
     if (err instanceof ApiClientError && err.status === 404) leave();
-    else if (err instanceof ApiClientError && err.code === 'not_your_turn' && sessionRef.current) void api.get(sessionRef.current).then(applyView).catch(() => {});
+    else if (err instanceof ApiClientError && ['not_your_turn', 'waiting', 'completed', 'nothing_to_undo'].includes(err.code) && sessionRef.current) void api.get(sessionRef.current).then(applyView).catch(() => {});
   }, [notify, leave, applyView]);
 
   const actions = useMemo(() => ({
@@ -218,47 +208,59 @@ export function useGame() {
       }
     },
     leave,
-    select(slot: number) {
-      if (board && !board.slots[slot]?.locked) setSelected(slot);
+    /** Chooses which letter of the current word the next keystroke replaces. */
+    select(index: number) {
+      if (canPlay) setDraft((d) => (d ? moveCursor(d, index) : d));
+    },
+    move(delta: number) {
+      if (canPlay) setDraft((d) => (d ? moveCursor(d, d.cursor + delta) : d));
     },
     type(letter: string) {
-      if (!canPlay || selected === null) return;
+      if (!canPlay) return;
       sound.key();
-      setBoard((b) => (b ? typeLetter(b, selected, letter) : b));
+      setDraft((d) => (d ? typeLetter(d, letter) : d));
     },
-    backspace() {
-      if (!canPlay || selected === null) return;
+    /** Puts the current word back the way it was. */
+    clear() {
+      if (!canPlay) return;
       sound.erase();
-      setBoard((b) => (b ? eraseLetter(b, selected) : b));
+      setDraft((d) => (d ? clearDraft(d) : d));
     },
-    undo() {
-      setBoard((b) => (b ? undoDraft(b) : b));
-    },
-    reset() {
-      sound.erase();
-      setBoard((b) => (b ? resetDrafts(b) : b));
-      notify('Drafts wiped. Locked words stay on the board.', 'info');
+    /** Takes the last word back off the board (for both players). */
+    async undo() {
+      const s = sessionRef.current;
+      if (!s || busy) return;
+      setBusy(true);
+      try {
+        applyView(await api.undo(s));
+      } catch (err) {
+        fail(err);
+      } finally {
+        setBusy(false);
+      }
     },
     async submit() {
       const s = sessionRef.current;
       const g = latest.current;
-      if (!s || !g || !board || selected === null || busy) return;
-      if (!canPlay) return void notify(g.status === 'completed' ? 'This puzzle is done — start a new game!' : "Hang on — it's not your turn.", 'info');
-      const slot = selected;
-      const word = board.slots[slot]!.text;
-      if (word.length !== g.length) {
-        setRejected({ slot, nonce: ++nonce });
-        return void notify(`Write all ${g.length} letters first.`, 'error');
+      if (!s || !g || !draft || busy) return;
+      if (!canPlay)
+        return void notify(
+          g.status === 'completed' ? 'This puzzle is done. Start a new game!' : g.players.length < 2 ? 'Waiting for your partner to join.' : "Hang on, it's not your turn.",
+          'info',
+        );
+      if (changedAt(draft) === null) {
+        setRejected(++nonce);
+        return void notify(`Tap a letter of ${draft.base} and change it first.`, 'error');
       }
       setBusy(true);
       try {
-        const res = await api.submit(s, slot, word);
+        const res = await api.submit(s, draft.text, g.chain.length);
         applyView(res.game);
-        if (res.accepted) setHighlight((h) => (h === slot ? null : h));
-        else {
+        if (!res.accepted) {
           sound.error();
-          setRejected({ slot, nonce: ++nonce });
-          notify(res.code === 'slot_locked' ? 'Your partner just locked that one!' : res.message, 'error');
+          setRejected(++nonce);
+          setDraft((d) => (d ? clearDraft(d) : d));
+          notify(res.message, 'error');
         }
       } catch (err) {
         fail(err);
@@ -271,18 +273,20 @@ export function useGame() {
       if (!s || busy) return;
       setBusy(true);
       try {
-        const slot = type === 'next' ? undefined : selected ?? undefined;
-        const { hint, game: view } = await api.hint(s, type, slot);
+        const { hint, game: view } = await api.hint(s, type);
         applyView(view);
         sound.hint();
-        setSelected(hint.slot);
+        setHighlight(hint.index);
         if (hint.type === 'next') {
-          setHighlight(hint.slot);
+          setDraft((d) => (d ? moveCursor(d, hint.index) : d));
           notify(hint.message, 'hint', 5000);
         } else if (hint.type === 'word') {
-          setBoard((b) => (b ? setDraft(b, hint.slot, hint.word) : b));
-          notify(`Try ${hint.word} — press Check to lock it in.`, 'hint', 5000);
-        } else notify(`Letter ${hint.index + 1} is ${hint.letter}.`, 'hint', 4000);
+          setDraft((d) => (d ? setWord(d, hint.word) : d));
+          notify(`Try ${hint.word}. Press Check to write it.`, 'hint', 5000);
+        } else {
+          setDraft((d) => (d ? typeLetter(moveCursor(d, hint.index), hint.letter) : d));
+          notify(`Put ${hint.letter} in place ${hint.index + 1}.`, 'hint', 5000);
+        }
       } catch (err) {
         fail(err);
       } finally {
@@ -315,9 +319,9 @@ export function useGame() {
       addReaction(emoji, true);
     },
     notify,
-  }), [applyView, board, busy, canPlay, enter, fail, leave, notify, selected]);
+  }), [applyView, busy, canPlay, draft, enter, fail, leave, notify]);
 
-  return { session, game, board, selected, busy, loading, rejected, highlight, toast, peer, reactions, link, clockOffset, canPlay, me, actions };
+  return { session, game, draft, busy, loading, rejected, highlight, toast, peer, reactions, link, clockOffset, canPlay, me, actions };
 }
 
 export type GameController = ReturnType<typeof useGame>;

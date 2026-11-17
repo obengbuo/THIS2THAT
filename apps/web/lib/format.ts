@@ -11,13 +11,13 @@ export const inviteLink = (code: string) => `${window.location.origin}${window.l
 
 export function resultSummary(game: GameView): string {
   const r = game.result;
-  const ladder = [game.start, ...game.slots.map((s) => s.word ?? '????'), game.target].join(' → ');
+  const ladder = [game.start, ...game.chain.map((s) => s.word)].join(' → ');
   const who = game.players.length > 1 ? `${game.players.map((p) => p.name).join(' + ')} got` : 'I got';
   return [
     `FROM THIS TO THAT ✍️`,
     `${who} from ${game.start} to ${game.target}!`,
     ladder,
-    r ? `⏱ ${formatTime(r.elapsedMs)} · 💡 ${r.hintsUsed} hints · ❌ ${r.wrongAttempts} misses · ⭐ ${r.score}` : '',
+    r ? `👣 ${r.moves} moves · ⏱ ${formatTime(r.elapsedMs)} · 💡 ${r.hintsUsed} hints · ❌ ${r.wrongAttempts} misses · ⭐ ${r.score}` : '',
   ].filter(Boolean).join('\n');
 }
 

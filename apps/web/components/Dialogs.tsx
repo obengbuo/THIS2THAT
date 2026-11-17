@@ -11,17 +11,17 @@ export function HowToPlay({ open, onClose }: { open: boolean; onClose: () => voi
   return (
     <Modal open={open} onClose={onClose} title="How to play" wide>
       <ol className="list-decimal space-y-2 pl-5 text-[17px] leading-snug">
-        <li>You get a <b>start word</b> and a <b>target word</b> on the whiteboard.</li>
-        <li>Fill the empty lines so each word changes <b>exactly one letter</b> from the word above it. No rearranging, adding or removing letters.</li>
-        <li>Every line must be a real English word.</li>
-        <li>Tap a line, write a word, and press <b>Check</b>. A correct word gets a <span className="text-green">green underline</span> and is <b>locked for good</b>.</li>
-        <li>Work top-down, bottom-up, or from the middle. There is often more than one route — any valid one counts.</li>
+        <li>The board starts with one word, and the goal line tells you the word to reach.</li>
+        <li>Tap a letter of the last word and change it to make a new word. <b>Exactly one letter</b> — no rearranging, adding or removing.</li>
+        <li>Press <b>Check</b>. If it is a real word that is not on the board yet, it is written underneath.</li>
+        <li>With two players you <b>take turns</b>: one letter each, back and forth, until someone writes the last word.</li>
+        <li>Any route works, but fewer moves scores more. Stuck in a dead end? <b>Take Back</b> removes the last word.</li>
       </ol>
       <p className="mt-4 rounded-2xl bg-wall p-3 text-center font-marker text-2xl tracking-[0.2em]">
         COLD → CORD → CARD → WARD → WARM
       </p>
       <p className="mt-4 text-[17px] leading-snug text-ink-soft">
-        <b className="text-ink">Far apart?</b> Pick <b className="text-ink">Couples</b>, send your partner the link, and you will both write on the same board in real time — you can even watch each other&apos;s handwriting appear.
+        <b className="text-ink">Far apart?</b> Pick <b className="text-ink">Couples</b>, send your partner the link, and you will take turns on the same board in real time — you can even watch each other&apos;s letter change as it is written.
       </p>
       <Button className="mt-5 w-full" onClick={onClose}>Got it</Button>
     </Modal>
@@ -80,11 +80,11 @@ export function InviteDialog({ open, onClose, game, notify }: { open: boolean; o
   };
   return (
     <Modal open={open} onClose={onClose} title="Invite your person">
-      <p className="text-[17px] leading-snug text-ink-soft">Send this code or link. When they join, you&apos;ll both be writing on the same whiteboard — wherever you each are.</p>
+      <p className="text-[17px] leading-snug text-ink-soft">Send this code or link. When they join, you take turns changing one letter on the same whiteboard — wherever you each are. You go first.</p>
       <p className="my-4 rounded-2xl bg-wall py-3 text-center font-marker text-5xl tracking-[0.25em]" aria-label={`Room code ${game.code.split('').join(' ')}`}>{game.code}</p>
       <p className="mb-4 truncate rounded-xl border-2 border-dashed border-wall-deep px-3 py-2 text-center text-sm text-ink-soft">{link}</p>
       <Button className="w-full" onClick={send}>Share invite link</Button>
-      <Button variant="ghost" className="mt-2 w-full" onClick={onClose}>Start solving while I wait</Button>
+      <Button variant="ghost" className="mt-2 w-full" onClick={onClose}>Close</Button>
     </Modal>
   );
 }
@@ -93,7 +93,7 @@ export function ResultsDialog({ open, game, busy, onNewGame, onClose, notify }: 
   open: boolean; game: GameView; busy: boolean; onNewGame: () => void; onClose: () => void; notify: (t: string, tone?: 'success' | 'error') => void;
 }) {
   const r = game.result;
-  const ladder = [game.start, ...game.slots.map((s) => s.word ?? ''), game.target];
+  const ladder = [game.start, ...game.chain.map((s) => s.word)];
   const send = async () => {
     const outcome = await share({ title: 'FROM THIS TO THAT', text: resultSummary(game) });
     if (outcome === 'copied') notify('Result copied — paste it anywhere!', 'success');
@@ -101,14 +101,14 @@ export function ResultsDialog({ open, game, busy, onNewGame, onClose, notify }: 
   };
   return (
     <Modal open={open} onClose={onClose} title="YOU GOT FROM THIS TO THAT!" wide>
-      <div className="rounded-2xl bg-wall p-3 text-center font-marker text-3xl leading-tight tracking-[0.18em]">
+      <div className="max-h-[38vh] overflow-y-auto rounded-2xl bg-wall p-3 text-center font-marker text-3xl leading-tight tracking-[0.18em]">
         {ladder.map((w, i) => (
           <div key={i} className={i === 0 || i === ladder.length - 1 ? '' : 'text-green'}>{w}</div>
         ))}
       </div>
       {r && (
         <dl className="mt-3 grid grid-cols-4 gap-2 text-center">
-          {[['Time', formatTime(r.elapsedMs)], ['Hints', r.hintsUsed], ['Misses', r.wrongAttempts], ['Score', r.score]].map(([k, v]) => (
+          {[['Moves', `${r.moves}/${r.optimalMoves}`], ['Time', formatTime(r.elapsedMs)], ['Hints', r.hintsUsed], ['Score', r.score]].map(([k, v]) => (
             <div key={k} className="rounded-2xl bg-wall px-1 py-2">
               <dt className="text-sm text-ink-soft">{k}</dt>
               <dd className="font-marker text-2xl leading-none">{v}</dd>

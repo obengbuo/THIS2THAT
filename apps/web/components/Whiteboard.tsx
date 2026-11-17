@@ -1,9 +1,10 @@
 'use client';
 
 import { AnimatePresence, motion, useAnimationControls } from 'motion/react';
-import { useEffect, useState } from 'react';
-import type { Board } from '@ftt/game-engine/board';
+import { useEffect, useRef, useState } from 'react';
+import { changedAt, type Draft } from '@ftt/game-engine/board';
 import type { GameView } from '@ftt/shared-types';
+import type { PeerDraft } from '@/lib/useGame';
 
 export const PLAYER_INK = ['var(--color-pink)', 'var(--color-blue)'];
 
@@ -25,93 +26,29 @@ function Underline({ color, animate, wobble }: { color: string; animate: boolean
   );
 }
 
-interface RowProps {
-  index: number;
-  length: number;
-  text: string;
-  kind: 'fixed' | 'locked' | 'open';
-  selected?: boolean;
-  disabled?: boolean;
-  highlighted?: boolean;
-  revealed?: (string | null)[];
-  peerText?: string;
-  tag?: { text: string; color: string } | null;
-  ink?: string;
-  shake?: number;
-  label: string;
-  onSelect?: () => void;
-}
-
-function WordRow({ index, length, text, kind, selected, disabled, highlighted, revealed, peerText, tag, ink, shake, label, onSelect }: RowProps) {
-  const controls = useAnimationControls();
-  const [wrong, setWrong] = useState(false);
-  // Words that were already locked when the row first rendered don't replay the stroke.
-  const [wasLockedAtMount] = useState(kind !== 'open');
-
-  useEffect(() => {
-    if (!shake) return;
-    setWrong(true);
-    void controls.start({ x: [0, -9, 9, -7, 7, -3, 0], transition: { duration: 0.42 } });
-    const t = setTimeout(() => setWrong(false), 1100);
-    return () => clearTimeout(t);
-  }, [shake, controls]);
-
+/** A word that is already on the board: the start word or one a player wrote. */
+function WrittenRow({ index, word, start, final, tag, ink, animate = false }: {
+  index: number; word: string; start?: boolean; final?: boolean; tag?: { text: string; color: string } | null; ink?: string;
+  /** Write the word in stroke by stroke (only for a word that has just been played). */
+  animate?: boolean;
+}) {
   const tilt = ((index * 37) % 5) - 2; // tiny per-row slant so it looks handwritten
-  const cells = Array.from({ length }, (_, i) => {
-    const mine = text[i];
-    const peer = !mine && !text ? peerText?.[i] : undefined;
-    const ghost = !mine && !peer ? revealed?.[i] ?? undefined : undefined;
-    return { mine, peer, ghost };
-  });
-
   return (
     <div className="word-row">
-      <motion.div
-        animate={controls}
-        role={kind === 'open' ? 'button' : undefined}
-        tabIndex={kind === 'open' && !disabled ? 0 : undefined}
-        aria-label={label}
-        aria-pressed={kind === 'open' ? !!selected : undefined}
-        onClick={kind === 'open' ? onSelect : undefined}
-        onKeyDown={(e) => kind === 'open' && e.key === ' ' && (e.preventDefault(), onSelect?.())}
-        className={`word-cells ${kind === 'open' ? 'cursor-pointer' : ''}`}
-        style={{
-          rotate: `${tilt * 0.35}deg`,
-          background: highlighted ? 'rgb(255 214 64 / 0.45)' : selected ? 'rgb(36 86 201 / 0.07)' : undefined,
-          boxShadow: highlighted ? '0 0 0 0.12em rgb(255 214 64 / 0.45)' : undefined,
-          transition: 'background 0.25s, box-shadow 0.25s',
-        }}
-      >
-        {cells.map((c, i) => (
-          <span key={i} className={`cell ${kind === 'open' ? 'cell-dash' : ''}`}>
-            <AnimatePresence mode="popLayout" initial={false}>
-              {c.mine && (
-                <motion.span
-                  key={`m${c.mine}`}
-                  initial={{ opacity: 0, scale: 0.5, y: '-0.15em', rotate: -10 }} animate={{ opacity: 1, scale: 1, y: 0, rotate: 0 }}
-                  exit={{ opacity: 0, scale: 0.8, filter: 'blur(3px)' }} transition={{ type: 'spring', stiffness: 520, damping: 26 }}
-                  style={{ color: kind === 'open' ? 'var(--color-ink)' : ink ?? 'var(--color-ink)' }}
-                >
-                  {c.mine}
-                </motion.span>
-              )}
-              {c.peer && (
-                <motion.span key={`p${c.peer}`} initial={{ opacity: 0, scale: 0.6 }} animate={{ opacity: 0.55, scale: 1 }} exit={{ opacity: 0 }} style={{ color: tag?.color ?? 'var(--color-blue)' }}>
-                  {c.peer}
-                </motion.span>
-              )}
-              {c.ghost && (
-                <motion.span key={`g${c.ghost}`} initial={{ opacity: 0, scale: 1.6 }} animate={{ opacity: 0.6, scale: 1 }} exit={{ opacity: 0 }} style={{ color: 'var(--color-amber)' }}>
-                  {c.ghost}
-                </motion.span>
-              )}
-            </AnimatePresence>
-            {selected && !disabled && i === Math.min(text.length, length - 1) && text.length < length && <span className="caret" style={{ left: '12%' }} />}
+      <div className="word-cells" aria-label={start ? `Start word ${word}` : `Word ${index}: ${word}`} style={{ rotate: `${tilt * 0.35}deg` }}>
+        {[...word].map((ch, i) => (
+          <span key={i} className="cell">
+            <motion.span
+              initial={animate ? { opacity: 0, scale: 0.5, y: '-0.15em', rotate: -10 } : false} animate={{ opacity: 1, scale: 1, y: 0, rotate: 0 }}
+              transition={{ type: 'spring', stiffness: 520, damping: 26, delay: animate ? i * 0.04 : 0 }}
+              style={{ color: start ? 'var(--color-ink)' : ink ?? 'var(--color-ink)' }}
+            >
+              {ch}
+            </motion.span>
           </span>
         ))}
-        {kind !== 'open' && <Underline color={kind === 'fixed' ? 'var(--color-ink)' : 'var(--color-green)'} animate={!wasLockedAtMount} wobble={index} />}
-        {kind === 'open' && wrong && <Underline color="var(--color-red)" animate wobble={index + 1} />}
-        {kind === 'locked' && !wasLockedAtMount && (
+        <Underline color={start ? 'var(--color-ink)' : final ? 'var(--color-green)' : ink ?? 'var(--color-green)'} animate={animate} wobble={index} />
+        {final && (
           <motion.span
             className="pointer-events-none absolute inset-0 rounded-[0.2em]" aria-hidden
             initial={{ boxShadow: '0 0 0 0 rgb(23 146 77 / 0.5)', background: 'rgb(23 146 77 / 0.16)' }}
@@ -120,6 +57,69 @@ function WordRow({ index, length, text, kind, selected, disabled, highlighted, r
           />
         )}
         {tag && <span className="row-tag" style={{ color: tag.color }}>{tag.text}</span>}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * The last word on the board, which the next move changes in place: tap a letter and
+ * type its replacement. When it is the partner's turn, their change shows here live.
+ */
+function CurrentRow({ index, word, start, text, changed, cursor, editable, ink, changeInk, highlight, shake, tag, animateIn, onSelect }: {
+  index: number; word: string; start: boolean; text: string; changed: number | null; cursor: number | null; editable: boolean;
+  ink: string; changeInk: string; highlight: number | null; shake: number; tag: { text: string; color: string } | null; animateIn: boolean; onSelect: (i: number) => void;
+}) {
+  const controls = useAnimationControls();
+  const [wrong, setWrong] = useState(false);
+  useEffect(() => {
+    if (!shake) return;
+    setWrong(true);
+    void controls.start({ x: [0, -9, 9, -7, 7, -3, 0], transition: { duration: 0.42 } });
+    const t = setTimeout(() => setWrong(false), 1100);
+    return () => clearTimeout(t);
+  }, [shake, controls]);
+
+  const tilt = ((index * 37) % 5) - 2;
+  const label = start ? `Start word ${word}` : `Word ${index}: ${word}`;
+  return (
+    <div className="word-row">
+      <motion.div
+        animate={controls} className="word-cells" role="group"
+        aria-label={editable ? `${label}. Change one letter` : label}
+        style={{ rotate: `${tilt * 0.35}deg` }}
+      >
+        {[...text].map((ch, i) => {
+          const isChanged = changed === i;
+          const style = {
+            color: isChanged ? changeInk : ink,
+            background: highlight === i ? 'rgb(255 214 64 / 0.55)' : cursor === i ? 'rgb(36 86 201 / 0.12)' : undefined,
+            boxShadow: cursor === i ? 'inset 0 -0.09em 0 var(--color-blue)' : undefined,
+          };
+          const letter = (
+            <AnimatePresence mode="popLayout" initial={animateIn}>
+              <motion.span
+                key={ch + (isChanged ? '*' : '')}
+                initial={{ opacity: 0, scale: 0.5, y: '-0.15em', rotate: -10 }} animate={{ opacity: 1, scale: 1, y: 0, rotate: 0 }}
+                exit={{ opacity: 0, scale: 0.8, filter: 'blur(3px)' }} transition={{ type: 'spring', stiffness: 520, damping: 26 }}
+              >
+                {ch}
+              </motion.span>
+            </AnimatePresence>
+          );
+          return editable ? (
+            <button
+              key={i} type="button" className="cell cell-pick" style={style} onClick={() => onSelect(i)}
+              aria-label={`Letter ${i + 1}: ${ch}${isChanged ? `, changed from ${word[i]}` : ''}`} aria-pressed={cursor === i}
+            >
+              {letter}
+            </button>
+          ) : (
+            <span key={i} className="cell" style={style}>{letter}</span>
+          );
+        })}
+        <Underline color={wrong ? 'var(--color-red)' : start ? 'var(--color-ink)' : ink} animate={wrong} wobble={wrong ? index + 1 : index} />
+        {tag && <span className="row-tag" style={{ color: tag.color }}>{tag.text}</span>}
       </motion.div>
     </div>
   );
@@ -127,27 +127,52 @@ function WordRow({ index, length, text, kind, selected, disabled, highlighted, r
 
 interface Props {
   game: GameView;
-  board: Board;
-  selected: number | null;
+  draft: Draft;
   canPlay: boolean;
   me: string | null;
   highlight: number | null;
-  rejected: { slot: number; nonce: number } | null;
-  peer: { drafts: Record<number, string>; focus: number | null };
-  onSelect: (slot: number) => void;
+  rejected: number;
+  peer: PeerDraft | null;
+  onSelect: (index: number) => void;
 }
 
-export function Whiteboard({ game, board, selected, canPlay, me, highlight, rejected, peer, onSelect }: Props) {
+export function Whiteboard({ game, draft, canPlay, me, highlight, rejected, peer, onSelect }: Props) {
   const playerIndex = (id: string | null) => Math.max(0, game.players.findIndex((p) => p.id === id));
-  const partner = game.mode === 'couples' ? game.players.find((p) => p.id !== me) : undefined;
-  const partnerInk = partner ? PLAYER_INK[playerIndex(partner.id)]! : PLAYER_INK[1]!;
   const multi = game.players.length > 1;
+  const playing = game.status === 'playing';
+  const words = [{ word: game.start, by: null as string | null }, ...game.chain];
+  const last = words.length - 1;
+  const inkOf = (by: string | null) => (by === null ? 'var(--color-ink)' : multi ? PLAYER_INK[playerIndex(by)]! : 'var(--color-green)');
+  const nameTag = (by: string | null) => (by !== null && multi ? { text: game.players[playerIndex(by)]?.name ?? '', color: PLAYER_INK[playerIndex(by)]! } : null);
 
+  // Whose change is showing on the last word: mine while it is my turn, otherwise my partner's.
+  const turnPlayer = game.turnBased ? game.players.find((p) => p.id === game.turn) : game.players[0];
+  const partnerWriting = game.mode === 'couples' && !canPlay && playing && peer?.after === game.chain.length && peer.text.length === game.length;
+  const shown = canPlay ? draft.text : partnerWriting ? peer!.text : words[last]!.word;
+  const changed = canPlay ? changedAt(draft) ?? -1 : partnerWriting ? [...shown].findIndex((ch, i) => ch !== words[last]!.word[i]) : -1;
+  const writerInk = multi && turnPlayer ? PLAYER_INK[playerIndex(turnPlayer.id)]! : 'var(--color-blue)';
+
+  // Keep the newest word in view as the ladder grows.
+  const end = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    end.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  }, [words.length, game.round]);
+
+  // Words that were already on the board when it first appeared are not re-animated.
+  const mounted = useRef(false);
+  useEffect(() => {
+    mounted.current = true;
+  }, []);
+
+  const moves = game.chain.length;
   return (
     <div className="board-frame flex h-full min-h-0 flex-col">
       <div className="board-surface flex min-h-0 flex-1 flex-col px-3 pb-2 pt-2 sm:px-6">
-        <p className="shrink-0 truncate text-center font-marker text-[clamp(1.05rem,4.6vw,1.6rem)] text-blue" style={{ rotate: '-1deg' }}>
+        <p className="shrink-0 truncate text-center font-marker text-[clamp(1.05rem,4.6vw,1.6rem)] text-blue" style={{ rotate: '-1deg' }} aria-label={`Goal: get from ${game.start} to ${game.target}`}>
           get from <b className="font-normal tracking-wider">{game.start}</b> to <b className="font-normal tracking-wider">{game.target}</b>
+        </p>
+        <p className="shrink-0 text-center text-[13px] leading-tight text-ink-soft">
+          {moves === 0 ? `change one letter at a time · can be done in ${game.optimalMoves} moves` : `${moves} ${moves === 1 ? 'move' : 'moves'} so far · can be done in ${game.optimalMoves}`}
         </p>
         <AnimatePresence mode="wait" initial={false}>
           <motion.div
@@ -155,27 +180,21 @@ export function Whiteboard({ game, board, selected, canPlay, me, highlight, reje
             initial={{ opacity: 0, filter: 'blur(6px)' }} animate={{ opacity: 1, filter: 'blur(0px)' }}
             exit={{ opacity: 0, x: 60, filter: 'blur(8px)' }} transition={{ duration: 0.35 }}
           >
-            <div className="board-rows-inner" style={{ ['--rows' as string]: game.slots.length + 2, ['--letters' as string]: game.length }}>
-              <WordRow index={0} length={game.length} text={game.start} kind="fixed" label={`Start word ${game.start}`} />
-              {game.slots.map((slot, i) => {
-                const local = board.slots[i]!;
-                const locked = local.locked;
-                const peerHere = partner && peer.focus === i && !locked;
-                const tag = locked && multi
-                  ? { text: game.players[playerIndex(slot.lockedBy)]?.name ?? '', color: PLAYER_INK[playerIndex(slot.lockedBy)]! }
-                  : peerHere ? { text: `${partner!.name} ✍️`, color: partnerInk } : null;
-                return (
-                  <WordRow
-                    key={i} index={i + 1} length={game.length} text={local.text} kind={locked ? 'locked' : 'open'}
-                    selected={selected === i} disabled={!canPlay} highlighted={highlight === i && !locked}
-                    revealed={slot.revealed} peerText={partner ? peer.drafts[i] : undefined} tag={tag}
-                    shake={rejected?.slot === i ? rejected.nonce : 0}
-                    label={locked ? `Word ${i + 1}: ${local.text}, locked` : `Word ${i + 1}: ${local.text || 'empty'}`}
-                    onSelect={() => onSelect(i)}
+            <div className="board-rows-inner" style={{ ['--rows' as string]: Math.min(8, Math.max(5, words.length)), ['--letters' as string]: game.length }}>
+              {words.map((w, i) =>
+                i === last && playing ? (
+                  <CurrentRow
+                    key={i} index={i} word={w.word} start={i === 0} text={shown} changed={changed >= 0 ? changed : null}
+                    cursor={canPlay ? draft.cursor : partnerWriting ? peer!.cursor : null} editable={canPlay}
+                    ink={inkOf(w.by)} changeInk={writerInk} highlight={canPlay ? highlight : null} shake={rejected}
+                    tag={partnerWriting && turnPlayer ? { text: `${turnPlayer.name} ✍️`, color: writerInk } : nameTag(w.by)}
+                    animateIn={mounted.current && i > 0} onSelect={onSelect}
                   />
-                );
-              })}
-              <WordRow index={game.slots.length + 1} length={game.length} text={game.target} kind="fixed" label={`Target word ${game.target}`} />
+                ) : (
+                  <WrittenRow key={i} index={i} word={w.word} start={i === 0} final={i === last && !playing} animate={mounted.current && i === last} tag={nameTag(w.by)} ink={inkOf(w.by)} />
+                ),
+              )}
+              <div ref={end} aria-hidden />
             </div>
           </motion.div>
         </AnimatePresence>

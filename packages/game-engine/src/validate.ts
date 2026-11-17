@@ -1,22 +1,19 @@
 import type { RejectCode } from '@ftt/shared-types';
-import { bfs, differsByOne, type WordGraph } from './graph';
+import { differsByOne, type WordGraph } from './graph';
 
 /**
- * A chain is the full ladder including both ends:
- *   chain[0] = start, chain[chain.length-1] = target, everything between is a slot
- *   holding either a LOCKED word or null.
+ * The ladder so far: words[0] is the start word and every later word was written by a
+ * player. The rules of a move are simple and local:
  *
- * Invariant used throughout: the number of steps (chain.length - 1) equals the
- * shortest-path distance between start and target. Therefore every complete solution
- * is a shortest path, every segment between two fixed words must itself be a shortest
- * path, and a word W fits position i exactly when
+ *   - it is a real word of the right length,
+ *   - it differs from the word before it by exactly one letter, in place,
+ *   - it has not been written on this board before.
  *
- *     dist(previous fixed word, W) == i - p   and   dist(W, next fixed word) == q - i
- *
- * This accepts ANY valid solution (not one hidden answer) and never lets a player lock
- * a word that would make the puzzle impossible to finish.
+ * There is no hidden answer and no fixed number of moves: any route that reaches the
+ * target wins. Because words cannot repeat a route can run into a dead end; taking the
+ * last word back is always possible.
  */
-export type Chain = (string | null)[];
+export type Ladder = string[];
 
 export type Placement =
   | { ok: true; word: string }
@@ -28,92 +25,68 @@ export function normalizeWord(input: unknown): string {
   return typeof input === 'string' ? input.trim().toUpperCase() : '';
 }
 
-/** Nearest fixed positions on either side of `position`. */
-export function anchorsAround(chain: Chain, position: number): { p: number; q: number } {
-  let p = position - 1;
-  while (p > 0 && chain[p] === null) p--;
-  let q = position + 1;
-  while (q < chain.length - 1 && chain[q] === null) q++;
-  return { p, q };
-}
-
-export function checkPlacement(graph: WordGraph, chain: Chain, position: number, input: unknown): Placement {
+/** Checks one move: may `input` be written after the last word of `words`? */
+export function checkStep(graph: WordGraph, words: Ladder, input: unknown): Placement {
   const word = normalizeWord(input);
-  if (!Number.isInteger(position) || position <= 0 || position >= chain.length - 1)
-    return reject('bad_slot', "That isn't a slot on this board.");
-  if (chain[position] !== null) return reject('slot_locked', 'That word is already locked in.');
+  const previous = words.at(-1)!;
   if (word.length !== graph.length || !/^[A-Z]+$/.test(word))
     return reject('bad_length', `Words need exactly ${graph.length} letters.`);
-  const id = graph.index.get(word);
-  if (id === undefined) return reject('not_a_word', 'Not a valid English word.');
-  if (chain.includes(word)) return reject('already_used', 'That word is already used.');
-
-  const { p, q } = anchorsAround(chain, position);
-  const before = chain[p]!;
-  const after = chain[q]!;
-  if (p === position - 1 && !differsByOne(before, word))
-    return reject('not_one_letter', `Change exactly one letter from ${before}.`);
-  if (q === position + 1 && !differsByOne(word, after))
-    return reject('not_one_letter', `Change exactly one letter to reach ${after}.`);
-
-  const up = position - p;
-  const down = q - position;
-  const dist = bfs(graph, id, { maxDepth: Math.max(up, down) });
-  if (dist[graph.index.get(before)!] !== up || dist[graph.index.get(after)!] !== down)
-    return reject('wrong_position', "This word doesn't fit the selected position.");
+  if (word === previous) return reject('not_one_letter', `Change one letter of ${previous} first.`);
+  if (!differsByOne(previous, word)) return reject('not_one_letter', `Change exactly one letter of ${previous}.`);
+  if (!graph.index.has(word)) return reject('not_a_word', `${word} is not a word we know.`);
+  if (words.includes(word)) return reject('already_used', `${word} is already on the board.`);
   return { ok: true, word };
 }
 
-/** Every word that may legally be locked into `position` right now. */
-export function candidatesFor(graph: WordGraph, chain: Chain, position: number): string[] {
-  if (position <= 0 || position >= chain.length - 1 || chain[position] !== null) return [];
-  const { p, q } = anchorsAround(chain, position);
-  const up = position - p;
-  const down = q - position;
-  const fromBefore = bfs(graph, graph.index.get(chain[p]!)!, { maxDepth: up });
-  const fromAfter = bfs(graph, graph.index.get(chain[q]!)!, { maxDepth: down });
-  const out: string[] = [];
-  for (let i = 0; i < graph.words.length; i++)
-    if (fromBefore[i] === up && fromAfter[i] === down) out.push(graph.words[i]!);
-  return out;
-}
-
-/** True when the chain is a legal ladder state (all fixed words consistent). */
-export function isChainConsistent(graph: WordGraph, chain: Chain): boolean {
-  const fixed = chain.map((w, i) => ({ w, i })).filter((x): x is { w: string; i: number } => x.w !== null);
-  if (fixed[0]?.i !== 0 || fixed.at(-1)?.i !== chain.length - 1) return false;
-  if (new Set(fixed.map((f) => f.w)).size !== fixed.length) return false;
-  for (let k = 0; k + 1 < fixed.length; k++) {
-    const a = graph.index.get(fixed[k]!.w);
-    const b = graph.index.get(fixed[k + 1]!.w);
-    if (a === undefined || b === undefined) return false;
-    const gap = fixed[k + 1]!.i - fixed[k]!.i;
-    if (bfs(graph, a, { maxDepth: gap })[b] !== gap) return false;
-  }
+/** True when `words` is a legal ladder: real words, one letter apart, no repeats. */
+export function isLadder(graph: WordGraph, words: Ladder): boolean {
+  if (words.length === 0 || new Set(words).size !== words.length) return false;
+  if (!words.every((w) => graph.index.has(w))) return false;
+  for (let i = 0; i + 1 < words.length; i++) if (!differsByOne(words[i]!, words[i + 1]!)) return false;
   return true;
 }
 
-/** Every slot filled and each adjacent pair differs by exactly one letter. */
-export function isComplete(chain: Chain): chain is string[] {
-  if (chain.some((w) => w === null)) return false;
-  for (let i = 0; i + 1 < chain.length; i++) if (!differsByOne(chain[i]!, chain[i + 1]!)) return false;
-  return new Set(chain).size === chain.length;
+/**
+ * The shortest way to finish the ladder from its last word without reusing a word:
+ * returns the words still to write (ending with `target`), an empty list if the ladder
+ * already ends on the target, or null if it has run into a dead end. Prefers familiar
+ * words; `choose` picks among equally good next words (default: the first).
+ */
+export function routeToTarget(graph: WordGraph, words: Ladder, target: string, choose: (n: number) => number = () => 0): string[] | null {
+  const from = graph.index.get(words.at(-1)!);
+  const goal = graph.index.get(target);
+  if (from === undefined || goal === undefined) return null;
+  if (from === goal) return [];
+  const blocked = new Set(words.slice(0, -1).map((w) => graph.index.get(w)));
+  if (blocked.has(goal)) return null;
+
+  // Distances to the target over words that are still available.
+  const dist = new Int16Array(graph.words.length).fill(-1);
+  dist[goal] = 0;
+  const queue = [goal];
+  for (let head = 0; head < queue.length && dist[from] === -1; head++) {
+    const u = queue[head]!;
+    for (const v of graph.neighbors[u]!) {
+      if (dist[v] !== -1 || blocked.has(v)) continue;
+      dist[v] = dist[u]! + 1;
+      queue.push(v);
+    }
+  }
+  if (dist[from] === -1) return null;
+
+  const route: string[] = [];
+  for (let node = from; node !== goal; ) {
+    const closer = graph.neighbors[node]!.filter((v) => dist[v] === dist[node]! - 1);
+    const familiar = closer.filter((v) => graph.common[v]);
+    const pool = familiar.length ? familiar : closer;
+    node = pool[choose(pool.length)]!;
+    route.push(graph.words[node]!);
+  }
+  return route;
 }
 
-/**
- * Completes the chain with one valid solution (preferring familiar words), or returns
- * null if the chain cannot be completed.
- */
-export function solve(graph: WordGraph, chain: Chain, choose: (n: number) => number = () => 0): string[] | null {
-  if (!isChainConsistent(graph, chain)) return null;
-  const out = [...chain];
-  for (let i = 1; i < out.length - 1; i++) {
-    if (out[i] !== null) continue;
-    const options = candidatesFor(graph, out, i);
-    if (options.length === 0) return null;
-    const familiar = options.filter((w) => graph.common[graph.index.get(w)!]);
-    const pool = familiar.length ? familiar : options;
-    out[i] = pool[choose(pool.length)]!;
-  }
-  return out as string[];
+/** Zero-based position of the single letter that differs between two adjacent words. */
+export function changedIndex(a: string, b: string): number {
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return i;
+  return -1;
 }

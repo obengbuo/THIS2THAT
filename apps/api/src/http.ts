@@ -52,6 +52,8 @@ export async function handleHttp(service: GameService, req: HttpRequest): Promis
         return { status: 200, body: await service.joinGame(id, json(req.body)) };
       case 'POST games/:id/submit':
         return { status: 200, body: await service.submitWord(session(req, id!), json(req.body)) };
+      case 'POST games/:id/undo':
+        return { status: 200, body: { game: await service.undoWord(session(req, id!)) } };
       case 'POST games/:id/hint':
         return { status: 200, body: await service.requestHint(session(req, id!), json(req.body)) };
       case 'POST games/:id/pass':

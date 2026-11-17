@@ -38,9 +38,10 @@ export const parseDifficulty = oneOf<Difficulty>(DIFFICULTIES, 'difficulty');
 export const parseMode = oneOf<GameMode>(GAME_MODES, 'game mode');
 export const parseHintType = oneOf<HintType>(['letter', 'word', 'next'], 'hint type');
 
-export function parseSlot(input: unknown, slotCount: number): number {
-  if (typeof input !== 'number' || !Number.isInteger(input) || input < 0 || input >= slotCount)
-    throw badRequest("That isn't a slot on this board.", 'bad_slot');
+/** Optional "how many words were on the board" marker sent with a move. */
+export function parseAfter(input: unknown): number | undefined {
+  if (input === undefined || input === null) return undefined;
+  if (typeof input !== 'number' || !Number.isInteger(input) || input < 0 || input > 1000) throw badRequest('Invalid move.');
   return input;
 }
 

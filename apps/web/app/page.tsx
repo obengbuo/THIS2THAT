@@ -34,7 +34,7 @@ export default function Page() {
         <main className="grid h-dvh place-items-center">
           <p className="font-title text-2xl text-ink-soft">FROM THIS TO THAT</p>
         </main>
-      ) : ctrl.game && ctrl.board && ctrl.session ? (
+      ) : ctrl.game && ctrl.draft && ctrl.session ? (
         <Game ctrl={ctrl} prefs={prefs} updatePrefs={updatePrefs} />
       ) : (
         <Home ctrl={ctrl} prefs={prefs} updatePrefs={updatePrefs} />

@@ -23,7 +23,7 @@ export function Keyboard({ disabled, busy, onLetter, onBackspace, onEnter }: {
             </button>
           ))}
           {r === 2 && (
-            <button type="button" onClick={onBackspace} disabled={disabled} className={`${key} grid flex-[1.4] place-items-center`} aria-label="Erase letter">
+            <button type="button" onClick={onBackspace} disabled={disabled} className={`${key} grid flex-[1.4] place-items-center`} aria-label="Put the letter back">
               <Icon name="erase" />
             </button>
           )}

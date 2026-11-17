@@ -3,7 +3,7 @@
  * reports uniqueness, solvability, speed and distribution. Every puzzle must be solvable.
  */
 import { expect, it } from 'vitest';
-import { checkPlacement, DIFFICULTY, distance, generatePuzzle, getGraph, isComplete, pairKey, type Chain } from '@ftt/game-engine';
+import { checkStep, DIFFICULTY, distance, generatePuzzle, getGraph, pairKey } from '@ftt/game-engine';
 
 const TOTAL = process.env.STRESS ? 60_000 : 10_000;
 
@@ -36,13 +36,13 @@ it(`generates ${TOTAL.toLocaleString()} puzzles: all solvable, well distributed,
 
     // Independently verify solvability by replaying the solution through the validator.
     const graph = getGraph(length);
-    const chain: Chain = [p.start, ...Array<null>(p.slots).fill(null), p.target];
+    const ladder = [p.start];
     let ok = p.start.length === length && p.target.length === length && distance(graph, p.start, p.target) === p.slots + 1;
-    for (let pos = 1; ok && pos <= p.slots; pos++) {
-      ok = checkPlacement(graph, chain, pos, p.solution[pos]).ok;
-      chain[pos] = p.solution[pos]!;
+    for (let pos = 1; ok && pos < p.solution.length; pos++) {
+      ok = checkStep(graph, ladder, p.solution[pos]).ok;
+      ladder.push(p.solution[pos]!);
     }
-    ok &&= isComplete(chain);
+    ok &&= ladder.at(-1) === p.target && ladder.length === p.slots + 2;
     ok &&= p.slots >= DIFFICULTY[difficulty].minSlots && p.slots <= DIFFICULTY[difficulty].maxSlots;
     if (ok) solvable++;
   }

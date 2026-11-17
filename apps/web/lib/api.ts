@@ -42,8 +42,9 @@ export const api = {
   create: (body: CreateGameRequest) => request<SessionResponse>('POST', '/games', body),
   join: (code: string, name: string, deviceId: string) => request<SessionResponse>('POST', `/games/${encodeURIComponent(code)}/join`, { name, deviceId }),
   get: (s: Session) => request<{ game: GameView }>('GET', `/games/${s.code}`, undefined, s).then((r) => r.game),
-  submit: (s: Session, slot: number, word: string) => request<SubmitResponse>('POST', `/games/${s.code}/submit`, { slot, word }, s),
-  hint: (s: Session, type: HintType, slot?: number) => request<HintResponse>('POST', `/games/${s.code}/hint`, { type, slot }, s),
+  submit: (s: Session, word: string, after: number) => request<SubmitResponse>('POST', `/games/${s.code}/submit`, { word, after }, s),
+  undo: (s: Session) => request<{ game: GameView }>('POST', `/games/${s.code}/undo`, {}, s).then((r) => r.game),
+  hint: (s: Session, type: HintType) => request<HintResponse>('POST', `/games/${s.code}/hint`, { type }, s),
   pass: (s: Session) => request<{ game: GameView }>('POST', `/games/${s.code}/pass`, {}, s).then((r) => r.game),
   newRound: (s: Session, settings: { length?: WordLength; difficulty?: Difficulty }) =>
     request<{ game: GameView }>('POST', `/games/${s.code}/new`, settings, s).then((r) => r.game),

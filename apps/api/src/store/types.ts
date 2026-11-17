@@ -8,11 +8,11 @@ export interface StoredPlayer {
   deviceId: string;
 }
 
-export interface StoredSlot {
-  word: string | null;
-  lockedBy: string | null;
-  lockedAt: number | null;
-  revealed: (string | null)[];
+export interface StoredStep {
+  word: string;
+  /** Player id who wrote it. */
+  by: string;
+  at: number;
 }
 
 export interface StoredGame {
@@ -31,7 +31,12 @@ export interface StoredGame {
   target: string;
   /** One verified solution. Server-side only. */
   solution: string[];
-  slots: StoredSlot[];
+  /** Fewest moves from start to target. */
+  optimalMoves: number;
+  /** Words written after `start`, in order. */
+  chain: StoredStep[];
+  /** Hint letters revealed for the next word. */
+  revealed: (string | null)[];
   players: StoredPlayer[];
   /** Index into players of whose turn it is. */
   turn: number;

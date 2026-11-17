@@ -30,15 +30,15 @@ const TOAST_STYLE = {
 };
 
 const HINTS: { type: HintType; title: string; detail: string }[] = [
-  { type: 'next', title: 'Show next move', detail: 'Highlights a line you can solve now' },
-  { type: 'letter', title: 'Reveal a letter', detail: 'One letter of the selected line' },
-  { type: 'word', title: 'Suggest a word', detail: 'Writes a word for you to check' },
+  { type: 'next', title: 'Which letter?', detail: 'Points at the letter to change' },
+  { type: 'word', title: 'Show me the move', detail: 'Writes the next word for you to check' },
 ];
 
 export function Game({ ctrl, prefs, updatePrefs }: { ctrl: GameController; prefs: Prefs; updatePrefs: (p: Partial<Prefs>) => void }) {
   const { actions, busy, canPlay, me } = ctrl;
   const game = ctrl.game!;
-  const board = ctrl.board!;
+  const draft = ctrl.draft!;
+  const changed = draft.text !== draft.base;
   const playing = game.status === 'playing';
   const couples = game.mode === 'couples';
   const waiting = couples && game.players.length < 2;
@@ -54,9 +54,9 @@ export function Game({ ctrl, prefs, updatePrefs }: { ctrl: GameController; prefs
   // Offer the invite as soon as a room is created.
   const invited = useRef(false);
   useEffect(() => {
-    if (waiting && !invited.current && game.round === 1 && game.correctSubmissions === 0) setInviteOpen(true);
+    if (waiting && !invited.current && game.round === 1 && game.chain.length === 0) setInviteOpen(true);
     invited.current = true;
-  }, [waiting, game.round, game.correctSubmissions]);
+  }, [waiting, game.round, game.chain.length]);
   useEffect(() => {
     if (!waiting) setInviteOpen(false);
   }, [waiting]);
@@ -74,42 +74,31 @@ export function Game({ ctrl, prefs, updatePrefs }: { ctrl: GameController; prefs
   // Physical keyboard.
   const handlers = useRef(actions);
   handlers.current = actions;
-  const selectedRef = useRef(ctrl.selected);
-  selectedRef.current = ctrl.selected;
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.metaKey || e.ctrlKey || e.altKey) {
-        if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z') {
-          e.preventDefault();
-          handlers.current.undo();
-        }
-        return;
-      }
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
       const target = e.target as HTMLElement;
       if (target.closest('input, textarea, [data-modal]') || document.querySelector('[data-modal]')) return;
       if (/^[a-zA-Z]$/.test(e.key)) handlers.current.type(e.key.toUpperCase());
-      else if (e.key === 'Backspace') handlers.current.backspace();
+      else if (e.key === 'Backspace' || e.key === 'Delete' || e.key === 'Escape') handlers.current.clear();
       else if (e.key === 'Enter') {
-        if (target.closest('button')) return; // let focused buttons do their own thing
+        if (target.closest('button:not(.cell-pick)')) return; // let focused buttons do their own thing
         e.preventDefault();
         void handlers.current.submit();
-      } else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      } else if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
         e.preventDefault();
-        const open = board.slots.map((s, i) => (s.locked ? -1 : i)).filter((i) => i >= 0);
-        if (!open.length) return;
-        const at = open.indexOf(selectedRef.current ?? open[0]!);
-        handlers.current.select(open[(at + (e.key === 'ArrowDown' ? 1 : open.length - 1)) % open.length]!);
+        handlers.current.move(e.key === 'ArrowLeft' ? -1 : 1);
       }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [board]);
+  }, []);
 
   const shareGame = async () => {
     const data = couples && playing
       ? { title: 'FROM THIS TO THAT', text: `Play FROM THIS TO THAT with me! Room code: ${game.code}`, url: inviteLink(game.code) }
       : playing
-        ? { title: 'FROM THIS TO THAT', text: `Can you get from ${game.start} to ${game.target} in ${game.slots.length} words? ✍️`, url: window.location.origin + window.location.pathname }
+        ? { title: 'FROM THIS TO THAT', text: `Can you get from ${game.start} to ${game.target} in ${game.optimalMoves} moves, one letter at a time? ✍️`, url: window.location.origin + window.location.pathname }
         : { title: 'FROM THIS TO THAT', text: resultSummary(game) };
     const outcome = await share(data);
     if (outcome === 'copied') actions.notify('Copied — paste it anywhere!', 'success');
@@ -184,7 +173,7 @@ export function Game({ ctrl, prefs, updatePrefs }: { ctrl: GameController; prefs
       {/* the whiteboard */}
       <section className="relative min-h-0 flex-1" aria-label="Whiteboard">
         <Whiteboard
-          game={game} board={board} selected={playing ? ctrl.selected : null} canPlay={canPlay} me={me}
+          game={game} draft={draft} canPlay={canPlay} me={me}
           highlight={ctrl.highlight} rejected={ctrl.rejected} peer={ctrl.peer} onSelect={actions.select}
         />
         <div className="pointer-events-none absolute inset-x-0 top-3 z-10 flex justify-center px-4" aria-live="polite">
@@ -249,8 +238,8 @@ export function Game({ ctrl, prefs, updatePrefs }: { ctrl: GameController; prefs
         </AnimatePresence>
         <div className="toolbar flex items-stretch gap-0.5 rounded-2xl bg-white/75 p-1">
           <button className={tool} onClick={() => { setNext({ length: game.length, difficulty: game.difficulty }); setNewOpen(true); }}><Icon name="new" />New Game</button>
-          <button className={tool} onClick={actions.reset} disabled={!playing}><Icon name="reset" />Reset</button>
-          <button className={tool} onClick={actions.undo} disabled={!playing || board.history.length === 0}><Icon name="undo" />Undo</button>
+          <button className={tool} onClick={actions.clear} disabled={!canPlay || !changed}><Icon name="reset" />Clear</button>
+          <button className={tool} onClick={() => void actions.undo()} disabled={!playing || busy || game.chain.length === 0} title="Take the last word back off the board"><Icon name="undo" />Take Back</button>
           <button className={tool} onClick={() => { setReactOpen(false); setHintOpen((o) => !o); }} disabled={!playing || busy} aria-expanded={hintOpen}><Icon name="hint" />Hint</button>
           <button className={`${tool} bg-green! text-white! disabled:opacity-50`} onClick={() => void actions.submit()} disabled={!canPlay || busy}><Icon name="check" />Check Word</button>
           <button className={tool} onClick={shareGame}><Icon name="share" />Share</button>
@@ -262,9 +251,9 @@ export function Game({ ctrl, prefs, updatePrefs }: { ctrl: GameController; prefs
         </div>
       </nav>
 
-      <Keyboard disabled={!canPlay} busy={busy} onLetter={actions.type} onBackspace={actions.backspace} onEnter={() => void actions.submit()} />
+      <Keyboard disabled={!canPlay} busy={busy} onLetter={actions.type} onBackspace={actions.clear} onEnter={() => void actions.submit()} />
       <p className="desktop-hint shrink-0 pb-3 text-center text-sm text-ink-soft">
-        Type to write · <kbd>Enter</kbd> to check · <kbd>↑</kbd> <kbd>↓</kbd> to change line · <kbd>Ctrl/⌘ Z</kbd> to undo
+        <kbd>←</kbd> <kbd>→</kbd> to pick a letter · type to change it · <kbd>Enter</kbd> to check · <kbd>Esc</kbd> to put it back
       </p>
 
       {/* dialogs */}
@@ -274,7 +263,7 @@ export function Game({ ctrl, prefs, updatePrefs }: { ctrl: GameController; prefs
           <Segmented label="Difficulty" value={next.difficulty} onChange={(difficulty) => setNext((n) => ({ ...n, difficulty }))} options={[{ value: 'easy', label: 'Easy' }, { value: 'medium', label: 'Medium' }, { value: 'hard', label: 'Hard' }]} />
           {playing && (
             <p className="rounded-2xl bg-wall px-3 py-2 text-[15px] leading-snug text-ink-soft">
-              This wipes the whole board{partner ? ' for both of you' : ''}, including locked words, and deals a fresh puzzle.
+              This wipes the whole board{partner ? ' for both of you' : ''} and deals a fresh pair of words.
             </p>
           )}
           <Button
