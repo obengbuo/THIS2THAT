@@ -323,6 +323,12 @@ branch, uploads `apps/web/out` as a zip and prints `https://main.<appId>.amplify
 Re-run it to publish a new version, then redeploy the backend with
 `-c allowedOrigins=https://main.<appId>.amplifyapp.com`.
 
+To check a deployment end to end (needs Playwright and Chromium):
+
+```bash
+npx tsx scripts/verify-live.ts https://main.<appId>.amplifyapp.com
+```
+
 ### Useful commands
 
 ```bash
@@ -416,10 +422,15 @@ app uses them.
 
 ## 14. Known limits
 
-- **Not yet run against real AWS.** The CDK stack synthesizes and the bundled Lambda starts and
-  serves `/health`, but nothing has been deployed from this repository, and `DynamoStore` has
-  no automated test (it mirrors `MemoryStore`, which is tested). Do a `-c stage=dev` deploy and
-  play a two-device game before pointing a domain at it.
+- **Verified once on AWS, by hand-run script.** The stack was deployed to `us-east-1` and
+  `scripts/verify-live.ts` played a full two-player Couples game through real browsers against
+  the live API Gateway, Lambdas and DynamoDB table: create, join by invite link, presence,
+  a rejected word, locks pushed over the WebSocket, reload and resume, the win dialog, a new
+  round, Solo and Pass-the-Phone starts, and Statistics. The CloudWatch logs showed no errors.
+  That run served the built site files under the site origin (`SERVE_LOCAL=1`) because the test
+  network could not reach `amplifyapp.com`; the Amplify deploy job succeeded, but the page as
+  served by Amplify was not fetched by the test. `DynamoStore` still has no automated unit
+  test, and nothing has been load-tested on AWS.
 - **Statistics are per browser.** They are keyed by an anonymous id in local storage, so they do
   not follow a player across devices. Cognito sign-in is the natural next step and is not
   implemented.
