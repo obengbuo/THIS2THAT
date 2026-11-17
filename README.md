@@ -427,6 +427,10 @@ app uses them.
   the live API Gateway, Lambdas and DynamoDB table: create, join by invite link, presence,
   a rejected word, locks pushed over the WebSocket, reload and resume, the win dialog, a new
   round, Solo and Pass-the-Phone starts, and Statistics. The CloudWatch logs showed no errors.
+  The first run missed a real bug — CORS preflights were routed to the Lambda and got a 404,
+  so real browsers could not start a game — because Playwright answers preflights itself when
+  it serves files locally. The API now routes only GET and POST, the Lambda answers a stray
+  OPTIONS with 204, and the script checks the preflight explicitly.
   That run served the built site files under the site origin (`SERVE_LOCAL=1`) because the test
   network could not reach `amplifyapp.com`; the Amplify deploy job succeeded, but the page as
   served by Amplify was not fetched by the test. `DynamoStore` still has no automated unit

@@ -407,3 +407,11 @@ describe('HTTP layer', () => {
     expect((await call('GET', '/health')).status).toBe(200);
   });
 });
+
+describe('Lambda HTTP handler', () => {
+  it('answers a CORS preflight with a 2xx instead of routing it to a 404', async () => {
+    const { handler } = await import('../apps/api/src/lambda/http');
+    const res = await handler({ rawPath: '/games', headers: {}, requestContext: { http: { method: 'OPTIONS' } } } as never);
+    expect(res.statusCode).toBe(204);
+  });
+});

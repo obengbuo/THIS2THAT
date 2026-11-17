@@ -1,6 +1,6 @@
 // End-to-end check of a deployed stack, driven through real browsers.
 //
-//   npx tsx scripts/verify-live.ts https://main.<appId>.amplifyapp.com
+//   npx tsx scripts/verify-live.ts https://main.<appId>.amplifyapp.com [ApiUrl]
 //
 // Plays a full two-player Couples game (create, join, presence, reject, lock, live push,
 // reload/resume, win, new round), then starts Solo and Pass-the-Phone and opens Statistics.
@@ -75,6 +75,31 @@ async function main() {
   const a = await newPlayer('A');
   const b = await newPlayer('B');
   await a.page.goto(SITE);
+
+  // Playwright answers CORS preflights itself whenever it intercepts requests (SERVE_LOCAL),
+  // so check the real one explicitly: a browser needs a 2xx with the site's origin allowed.
+  await a.page.waitForLoadState('networkidle');
+  const apiBase = (process.argv[3] ?? process.env.API_URL)?.replace(/\/+$/, '') ?? await a.page.evaluate(async () => {
+    for (const src of Array.from(document.scripts, (s) => s.src).filter(Boolean)) {
+      const m = /https:\/\/[a-z0-9]+\.execute-api\.[a-z0-9-]+\.amazonaws\.com/.exec(await (await fetch(src)).text());
+      if (m) return m[0];
+    }
+    return null;
+  });
+  if (!apiBase) throw new Error('could not find the API URL in the site bundle');
+  for (const [reqMethod, reqPath, reqHeaders] of [['POST', '/games', 'content-type'], ['GET', '/games/ABCDEF', 'authorization']] as const) {
+    const pre = await a.page.context().request.fetch(`${apiBase}${reqPath}`, {
+      method: 'OPTIONS', headers: { origin: SITE, 'access-control-request-method': reqMethod, 'access-control-request-headers': reqHeaders },
+    });
+    const h = pre.headers();
+    if (!pre.ok() || h['access-control-allow-origin'] !== SITE || !h['access-control-allow-methods']?.includes(reqMethod) || !h['access-control-allow-headers']?.includes(reqHeaders))
+      throw new Error(`CORS preflight for ${reqMethod} ${reqPath} failed: HTTP ${pre.status()} ${JSON.stringify(h)}`);
+  }
+  const foreign = await a.page.context().request.fetch(`${apiBase}/games`, {
+    method: 'OPTIONS', headers: { origin: 'https://not-the-site.example', 'access-control-request-method': 'POST', 'access-control-request-headers': 'content-type' },
+  });
+  if (foreign.headers()['access-control-allow-origin']) throw new Error('API allows a foreign origin');
+  ok('CORS preflight succeeds for the site origin and not for another origin');
   await pick(a, 'Couples'); await pick(a, '4 Letters'); await pick(a, 'Medium');
   await a.page.getByLabel('Your name').fill('Ama');
   await a.page.getByRole('button', { name: 'START GAME' }).click();

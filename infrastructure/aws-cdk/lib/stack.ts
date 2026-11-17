@@ -116,7 +116,13 @@ export class FromThisToThatStack extends Stack {
         allowHeaders: ['content-type', 'authorization'],
         maxAge: Duration.hours(1),
       },
-      defaultIntegration: new HttpLambdaIntegration('HttpRoutes', httpFn),
+    });
+    // GET and POST only: with no route for OPTIONS, API Gateway answers CORS preflights
+    // itself (a catch-all default route would forward them to the Lambda instead).
+    httpApi.addRoutes({
+      path: '/{proxy+}',
+      methods: [apigw.HttpMethod.GET, apigw.HttpMethod.POST],
+      integration: new HttpLambdaIntegration('HttpRoutes', httpFn),
     });
     // Request throttling (basic abuse prevention) on the default stage.
     (httpApi.defaultStage!.node.defaultChild as apigw.CfnStage).defaultRouteSettings = {
