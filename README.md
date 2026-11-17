@@ -312,6 +312,17 @@ NEXT_PUBLIC_API_URL=<ApiUrl> NEXT_PUBLIC_WS_URL=<WebSocketUrl> npm run build
 # upload apps/web/out/
 ```
 
+*Option D — manual Amplify deploy (no GitHub token).*
+
+```bash
+node scripts/deploy-web.mjs <ApiUrl> <WebSocketUrl>
+```
+
+Builds the site, creates (or reuses) an Amplify app named `from-this-to-that` with a `main`
+branch, uploads `apps/web/out` as a zip and prints `https://main.<appId>.amplifyapp.com`.
+Re-run it to publish a new version, then redeploy the backend with
+`-c allowedOrigins=https://main.<appId>.amplifyapp.com`.
+
 ### Useful commands
 
 ```bash

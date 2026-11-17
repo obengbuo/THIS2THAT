@@ -3,8 +3,14 @@
   "private": true,
   "version": "1.0.0",
   "description": "FROM THIS TO THAT — a real-time whiteboard word-ladder game for couples, near or far.",
-  "workspaces": ["packages/*", "apps/*", "infrastructure/*"],
-  "engines": { "node": ">=20" },
+  "workspaces": [
+    "packages/*",
+    "apps/*",
+    "infrastructure/*"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "dev": "concurrently -n api,web -c magenta,cyan \"npm run dev -w @ftt/api\" \"npm run dev -w @ftt/web\"",
     "dev:api": "npm run dev -w @ftt/api",
@@ -18,8 +24,10 @@
     "deploy": "npm run deploy -w @ftt/infrastructure"
   },
   "devDependencies": {
+    "@aws-sdk/client-amplify": "^3.1170.0",
     "@types/node": "^22.10.0",
     "concurrently": "^9.1.0",
+    "fflate": "^0.8.3",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2",
     "vitest": "^2.1.8"
